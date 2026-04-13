@@ -18,6 +18,14 @@ export interface ToolDefinition {
   requiresApproval?: boolean;
   /** Category for grouping (e.g. "crm", "booking", "knowledge") */
   category?: string;
+  /** Rate limit for this tool (requests per minute/hour/day) */
+  rateLimit?: ToolRateLimit;
+}
+
+export interface ToolRateLimit {
+  requestsPerMinute?: number;
+  requestsPerHour?: number;
+  requestsPerDay?: number;
 }
 
 export interface ToolParameter {
@@ -40,6 +48,9 @@ export interface ToolAdapter {
     name: string,
     params: Record<string, unknown>,
   ): ToolValidationResult;
+
+  /** Optional: check rate limit before execution. Returns ms to wait, or 0 if ok. */
+  checkRateLimit?(name: string): number;
 }
 
 export interface ToolValidationResult {

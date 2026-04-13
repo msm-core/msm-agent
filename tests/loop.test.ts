@@ -2,14 +2,21 @@ import { describe, it, expect, vi } from "vitest";
 import { executeEvent, type LoopDeps } from "../src/core/loop.js";
 import { DEFAULT_CONFIG } from "../src/core/types.js";
 import type { AgentEvent, Brain, AgentConfig } from "../src/core/types.js";
-import type { MSMPayload, OrchestrationOutput, GenerationOutput, FinalOutput } from "msm-ai";
+import type {
+  MSMPayload,
+  OrchestrationOutput,
+  GenerationOutput,
+  FinalOutput,
+} from "msm-ai";
 import { InMemoryAdapter } from "../src/adapters-dummy/memory.js";
 import { MockToolAdapter } from "../src/adapters-dummy/tools.js";
 import { ConsoleDeliveryAdapter } from "../src/adapters-dummy/delivery.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
-function makeOrch(overrides: Partial<OrchestrationOutput> = {}): OrchestrationOutput {
+function makeOrch(
+  overrides: Partial<OrchestrationOutput> = {},
+): OrchestrationOutput {
   return {
     model_id: "test",
     model_ver: "1.0",
@@ -76,7 +83,11 @@ function sequenceBrain(...payloads: MSMPayload[]): Brain {
 
 /** Create a brain that always returns the same payload */
 function staticBrain(payload: MSMPayload): Brain {
-  return { async run() { return payload; } };
+  return {
+    async run() {
+      return payload;
+    },
+  };
 }
 
 function userEvent(text: string, sessionId = "s1"): AgentEvent {
@@ -99,13 +110,18 @@ function makeDeps(brain: Brain, overrides: Partial<LoopDeps> = {}): LoopDeps {
 describe("execution loop", () => {
   describe("terminal actions", () => {
     it("returns response on action=respond", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("The answer is 42."),
-        final_output: makeFinalOutput("The answer is 42."),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("The answer is 42."),
+          final_output: makeFinalOutput("The answer is 42."),
+        }),
+      );
 
-      const outcome = await executeEvent(userEvent("What is the answer?"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("What is the answer?"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("response");
       if (outcome.type === "response") {
         expect(outcome.text).toBe("The answer is 42.");
@@ -114,11 +130,19 @@ describe("execution loop", () => {
     });
 
     it("returns escalated on action=escalate", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "escalate", reasoning: "Need human help" }),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({
+            action: "escalate",
+            reasoning: "Need human help",
+          }),
+        }),
+      );
 
-      const outcome = await executeEvent(userEvent("I need a manager"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("I need a manager"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("escalated");
       if (outcome.type === "escalated") {
         expect(outcome.reason).toBe("Need human help");
@@ -126,13 +150,18 @@ describe("execution loop", () => {
     });
 
     it("returns clarification on action=clarify", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "clarify" }),
-        generation: makeGeneration("What size do you want?"),
-        final_output: makeFinalOutput("What size do you want?"),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "clarify" }),
+          generation: makeGeneration("What size do you want?"),
+          final_output: makeFinalOutput("What size do you want?"),
+        }),
+      );
 
-      const outcome = await executeEvent(userEvent("I want a shirt"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("I want a shirt"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("clarification");
       if (outcome.type === "clarification") {
         expect(outcome.question).toBe("What size do you want?");
@@ -140,14 +169,22 @@ describe("execution loop", () => {
     });
 
     it("returns delegated on action=delegate", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: {
-          ...makeOrch({ action: "delegate", reasoning: "Sending to billing" }),
-          delegate_to_role: "billing_agent",
-        } as OrchestrationOutput,
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: {
+            ...makeOrch({
+              action: "delegate",
+              reasoning: "Sending to billing",
+            }),
+            delegate_to_role: "billing_agent",
+          } as OrchestrationOutput,
+        }),
+      );
 
-      const outcome = await executeEvent(userEvent("Check my bill"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("Check my bill"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("delegated");
       if (outcome.type === "delegated") {
         expect(outcome.targetRole).toBe("billing_agent");
@@ -155,11 +192,16 @@ describe("execution loop", () => {
     });
 
     it("returns custom for unknown actions", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "schedule_callback" }),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "schedule_callback" }),
+        }),
+      );
 
-      const outcome = await executeEvent(userEvent("Call me later"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("Call me later"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("custom");
       if (outcome.type === "custom") {
         expect(outcome.action).toBe("schedule_callback");
@@ -220,7 +262,12 @@ describe("execution loop", () => {
 
       const tools = new MockToolAdapter(
         [{ name: "failing_tool", description: "Always fails", parameters: {} }],
-        new Map([["failing_tool", { status: "failed", result: { error: "Connection refused" } }]]),
+        new Map([
+          [
+            "failing_tool",
+            { status: "failed", result: { error: "Connection refused" } },
+          ],
+        ]),
       );
 
       const outcome = await executeEvent(
@@ -250,9 +297,13 @@ describe("execution loop", () => {
         }),
       );
 
-      const tools = new MockToolAdapter([{ name: "crasher", description: "", parameters: {} }]);
+      const tools = new MockToolAdapter([
+        { name: "crasher", description: "", parameters: {} },
+      ]);
       // Override execute to throw
-      tools.execute = async () => { throw new Error("Boom!"); };
+      tools.execute = async () => {
+        throw new Error("Boom!");
+      };
 
       const outcome = await executeEvent(
         userEvent("Crash test"),
@@ -262,21 +313,20 @@ describe("execution loop", () => {
       expect(outcome.type).toBe("response");
     });
 
-    it("skips tool with no tool_name", async () => {
-      // Brain says use_tool but forgets tool_name — loop should continue
+    it("aborts on use_tool with no tool_name", async () => {
+      // Brain says use_tool but forgets tool_name — must abort immediately
+      // to prevent infinite loop (dalil: INVALID_REASONING → failTask)
       const brain = sequenceBrain(
         makePayload({
           orchestration: makeOrch({ action: "use_tool" }), // no tool_name
         }),
-        makePayload({
-          orchestration: makeOrch({ action: "respond" }),
-          generation: makeGeneration("Fallback."),
-          final_output: makeFinalOutput("Fallback."),
-        }),
       );
 
       const outcome = await executeEvent(userEvent("Test"), makeDeps(brain));
-      expect(outcome.type).toBe("response");
+      expect(outcome.type).toBe("error");
+      if (outcome.type === "error") {
+        expect(outcome.error).toContain("tool_name");
+      }
     });
 
     it("checks tool validation when available", async () => {
@@ -295,8 +345,13 @@ describe("execution loop", () => {
         }),
       );
 
-      const tools = new MockToolAdapter([{ name: "strict_tool", description: "", parameters: {} }]);
-      tools.validate = () => ({ valid: false, errors: ["Missing required field 'id'"] });
+      const tools = new MockToolAdapter([
+        { name: "strict_tool", description: "", parameters: {} },
+      ]);
+      tools.validate = () => ({
+        valid: false,
+        errors: ["Missing required field 'id'"],
+      });
 
       const outcome = await executeEvent(
         userEvent("Test validation"),
@@ -323,7 +378,12 @@ describe("execution loop", () => {
       );
 
       const tools = new MockToolAdapter([
-        { name: "delete_account", description: "Destructive", parameters: {}, requiresApproval: true },
+        {
+          name: "delete_account",
+          description: "Destructive",
+          parameters: {},
+          requiresApproval: true,
+        },
       ]);
 
       const delivery = new ConsoleDeliveryAdapter();
@@ -334,40 +394,51 @@ describe("execution loop", () => {
         makeDeps(brain, { tools, delivery }),
       );
 
-      expect(delivery.requestApproval).toHaveBeenCalledWith("s1", "delete_account", { id: "123" });
+      expect(delivery.requestApproval).toHaveBeenCalledWith(
+        "s1",
+        "delete_account",
+        { id: "123" },
+      );
       expect(outcome.type).toBe("response");
     });
   });
 
   describe("guards integration", () => {
     it("returns clarification on low confidence tool call", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({
-          action: "use_tool",
-          tool_name: "risky_call",
-          confidence: 0.3, // Below 0.6 threshold
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({
+            action: "use_tool",
+            tool_name: "risky_call",
+            confidence: 0.3, // Below 0.6 threshold
+          }),
+          generation: makeGeneration("Can you clarify what you mean?"),
+          final_output: makeFinalOutput("Can you clarify what you mean?"),
         }),
-        generation: makeGeneration("Can you clarify what you mean?"),
-        final_output: makeFinalOutput("Can you clarify what you mean?"),
-      }));
+      );
 
-      const outcome = await executeEvent(userEvent("Do something"), makeDeps(brain));
+      const outcome = await executeEvent(
+        userEvent("Do something"),
+        makeDeps(brain),
+      );
       expect(outcome.type).toBe("clarification");
     });
 
     it("force-responds when iteration limit is reached", async () => {
       // Brain keeps requesting tool calls — should hit iteration limit
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({
-          action: "use_tool",
-          tool_name: "infinite_tool",
-          tool_params: {},
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({
+            action: "use_tool",
+            tool_name: "infinite_tool",
+            tool_params: {},
+          }),
         }),
-      }));
-
-      const tools = new MockToolAdapter(
-        [{ name: "infinite_tool", description: "", parameters: {} }],
       );
+
+      const tools = new MockToolAdapter([
+        { name: "infinite_tool", description: "", parameters: {} },
+      ]);
 
       const config: AgentConfig = { ...DEFAULT_CONFIG, maxIterations: 3 };
       const outcome = await executeEvent(
@@ -391,8 +462,18 @@ describe("execution loop", () => {
             tool_name: "step1",
             tool_params: {},
             plan: [
-              { id: 1, description: "Do step 1", tool_hint: "step1", status: "pending" },
-              { id: 2, description: "Do step 2", tool_hint: "step2", status: "pending" },
+              {
+                id: 1,
+                description: "Do step 1",
+                tool_hint: "step1",
+                status: "pending",
+              },
+              {
+                id: 2,
+                description: "Do step 2",
+                tool_hint: "step2",
+                status: "pending",
+              },
             ],
           }),
         }),
@@ -474,19 +555,18 @@ describe("execution loop", () => {
     it("calls onGuard when guards fire", async () => {
       const onGuard = vi.fn();
 
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({
-          action: "use_tool",
-          tool_name: "x",
-          confidence: 0.2,
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({
+            action: "use_tool",
+            tool_name: "x",
+            confidence: 0.2,
+          }),
+          generation: makeGeneration("Clarify please"),
         }),
-        generation: makeGeneration("Clarify please"),
-      }));
-
-      await executeEvent(
-        userEvent("Unclear"),
-        makeDeps(brain, { onGuard }),
       );
+
+      await executeEvent(userEvent("Unclear"), makeDeps(brain, { onGuard }));
 
       expect(onGuard).toHaveBeenCalled();
       const signal = onGuard.mock.calls[0][0];
@@ -496,17 +576,23 @@ describe("execution loop", () => {
 
   describe("event types", () => {
     it("handles tool_callback events", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("Got the callback."),
-        final_output: makeFinalOutput("Got the callback."),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("Got the callback."),
+          final_output: makeFinalOutput("Got the callback."),
+        }),
+      );
 
       const event: AgentEvent = {
         type: "tool_callback",
         sessionId: "s1",
         taskId: "t1",
-        result: { tool: "webhook_tool", status: "ok", result: { data: "callback data" } },
+        result: {
+          tool: "webhook_tool",
+          status: "ok",
+          result: { data: "callback data" },
+        },
       };
 
       const outcome = await executeEvent(event, makeDeps(brain));
@@ -514,11 +600,13 @@ describe("execution loop", () => {
     });
 
     it("handles webhook events", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("Webhook processed."),
-        final_output: makeFinalOutput("Webhook processed."),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("Webhook processed."),
+          final_output: makeFinalOutput("Webhook processed."),
+        }),
+      );
 
       const event: AgentEvent = {
         type: "webhook",
@@ -532,11 +620,13 @@ describe("execution loop", () => {
     });
 
     it("handles cron events", async () => {
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("Cron job done."),
-        final_output: makeFinalOutput("Cron job done."),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("Cron job done."),
+          final_output: makeFinalOutput("Cron job done."),
+        }),
+      );
 
       const event: AgentEvent = {
         type: "cron",
@@ -552,16 +642,15 @@ describe("execution loop", () => {
     it("saves user and assistant messages to memory", async () => {
       const memory = new InMemoryAdapter();
 
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("Hi there!"),
-        final_output: makeFinalOutput("Hi there!"),
-      }));
-
-      await executeEvent(
-        userEvent("Hello", "s1"),
-        makeDeps(brain, { memory }),
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("Hi there!"),
+          final_output: makeFinalOutput("Hi there!"),
+        }),
       );
+
+      await executeEvent(userEvent("Hello", "s1"), makeDeps(brain, { memory }));
 
       const messages = await memory.getConversation("s1");
       expect(messages).toHaveLength(2);
@@ -574,11 +663,13 @@ describe("execution loop", () => {
     it("persists task state", async () => {
       const memory = new InMemoryAdapter();
 
-      const brain = staticBrain(makePayload({
-        orchestration: makeOrch({ action: "respond" }),
-        generation: makeGeneration("Done."),
-        final_output: makeFinalOutput("Done."),
-      }));
+      const brain = staticBrain(
+        makePayload({
+          orchestration: makeOrch({ action: "respond" }),
+          generation: makeGeneration("Done."),
+          final_output: makeFinalOutput("Done."),
+        }),
+      );
 
       await executeEvent(
         userEvent("Do something"),

@@ -31,9 +31,17 @@ import type {
 import type { MemoryAdapter } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
 import type { DeliveryAdapter } from "../adapters/delivery.js";
+import type { ControlBusAdapter } from "../adapters/control-bus.js";
 import { checkGuards, hasHardBlock } from "./guards.js";
 import { buildContext } from "./context.js";
-import { createPlan, advancePlanStep, failPlanStep, canReplan, clearPlan } from "./planner.js";
+import {
+  createPlan,
+  advancePlanStep,
+  failPlanStep,
+  canReplan,
+  clearPlan,
+} from "./planner.js";
+import { checkDedup } from "./tool-dedup.js";
 
 export interface LoopDeps {
   brain: Brain;
@@ -41,10 +49,18 @@ export interface LoopDeps {
   tools: ToolAdapter;
   delivery: DeliveryAdapter;
   config: AgentConfig;
+  /** Optional: control bus for runtime operability (pause/kill/disable) */
+  controlBus?: ControlBusAdapter;
+  /** Optional: tenant ID for control bus checks */
+  tenantId?: string;
   /** Optional: called on every iteration for observability */
   onIteration?: (state: RunState, step: StepResult) => void;
   /** Optional: called when a guard fires */
   onGuard?: (signal: import("./types.js").GuardSignal) => void;
+  /** Optional: custom history compaction hook (passed through to buildContext) */
+  compactHistory?: (
+    messages: import("./types.js").Message[],
+  ) => Promise<Array<{ role: "user" | "assistant"; content: string }>>;
 }
 
 /**
@@ -56,15 +72,18 @@ export async function executeEvent(
   event: AgentEvent,
   deps: LoopDeps,
 ): Promise<LoopOutcome> {
-  const sessionId = "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
-  const text = event.type === "user_message"
-    ? event.text
-    : event.type === "tool_callback"
-      ? `Tool result received for task ${event.taskId}`
-      : event.type === "webhook"
-        ? `Webhook from ${event.source}`
-        : `Scheduled task: ${event.taskType}`;
-  const modality = event.type === "user_message" ? event.modality : "text" as const;
+  const sessionId =
+    "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
+  const text =
+    event.type === "user_message"
+      ? event.text
+      : event.type === "tool_callback"
+        ? `Tool result received for task ${event.taskId}`
+        : event.type === "webhook"
+          ? `Webhook from ${event.source}`
+          : `Scheduled task: ${event.taskType}`;
+  const modality =
+    event.type === "user_message" ? event.modality : ("text" as const);
 
   // Create task
   const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -102,6 +121,32 @@ export async function executeEvent(
 
   // ─── The Loop ────────────────────────────────────────────
   while (state.iteration < deps.config.maxIterations) {
+    // ─── Control Bus: Abort/Pause Check ────────────────────
+    if (deps.controlBus) {
+      const killReason = await deps.controlBus.isTaskKilled(taskId);
+      if (killReason) {
+        deps.onGuard?.({ type: "aborted", taskId, reason: killReason });
+        await finishTask(task, "aborted", deps);
+        return { type: "aborted", taskId, reason: killReason };
+      }
+      if (deps.tenantId) {
+        const pauseReason = await deps.controlBus.isTenantPaused(deps.tenantId);
+        if (pauseReason) {
+          deps.onGuard?.({
+            type: "aborted",
+            taskId,
+            reason: `Tenant paused: ${pauseReason}`,
+          });
+          await finishTask(task, "aborted", deps);
+          return {
+            type: "aborted",
+            taskId,
+            reason: `Tenant paused: ${pauseReason}`,
+          };
+        }
+      }
+    }
+
     // Send typing indicator if available
     await deps.delivery.sendTyping?.(sessionId);
 
@@ -115,6 +160,7 @@ export async function executeEvent(
       state,
       task,
       lastToolResult,
+      compactHistory: deps.compactHistory,
     });
 
     // Call brain
@@ -126,7 +172,11 @@ export async function executeEvent(
     // Extract brain's decision from orchestration layer
     const orch = payload.orchestration;
     if (!orch) {
-      return { type: "error", error: "Brain returned no orchestration output", payload };
+      return {
+        type: "error",
+        error: "Brain returned no orchestration output",
+        payload,
+      };
     }
 
     const action = orch.action;
@@ -142,7 +192,13 @@ export async function executeEvent(
     }
 
     // ─── Guard Check ─────────────────────────────────────
-    const signals = checkGuards(state, deps.config, action, confidence, toolName);
+    const signals = checkGuards(
+      state,
+      deps.config,
+      action,
+      confidence,
+      toolName,
+    );
     for (const signal of signals) {
       deps.onGuard?.(signal);
     }
@@ -151,17 +207,19 @@ export async function executeEvent(
       // Check if it's a confidence gate → convert to clarification
       const confidenceBlock = signals.find((s) => s.type === "confidence_low");
       if (confidenceBlock) {
-        const clarifyText = payload.generation?.response_text
-          ?? payload.final_output?.text
-          ?? "Could you provide more details?";
+        const clarifyText =
+          payload.generation?.response_text ??
+          payload.final_output?.text ??
+          "Could you provide more details?";
         await finishTask(task, "waiting_clarification", deps);
         return { type: "clarification", question: clarifyText, payload };
       }
 
       // Budget/iteration limit → force respond with whatever we have
-      const responseText = payload.final_output?.text
-        ?? payload.generation?.response_text
-        ?? "I was unable to complete this task within the allowed limits.";
+      const responseText =
+        payload.final_output?.text ??
+        payload.generation?.response_text ??
+        "I was unable to complete this task within the allowed limits.";
       await finishTask(task, "completed", deps);
       return {
         type: "response",
@@ -174,12 +232,22 @@ export async function executeEvent(
 
     // ─── Terminal Actions ─────────────────────────────────
     if (action === STANDARD_ACTIONS.RESPOND || action === "complete") {
-      const responseText = payload.final_output?.text
-        ?? payload.generation?.response_text
-        ?? "Done.";
+      const responseText =
+        payload.final_output?.text ??
+        payload.generation?.response_text ??
+        "Done.";
 
       // Record step
-      const step = recordStep(state, action, null, null, null, confidence, reasoning, latencyMs);
+      const step = recordStep(
+        state,
+        action,
+        null,
+        null,
+        null,
+        confidence,
+        reasoning,
+        latencyMs,
+      );
       deps.onIteration?.(state, step);
 
       // Record assistant message
@@ -200,17 +268,36 @@ export async function executeEvent(
     }
 
     if (action === STANDARD_ACTIONS.ESCALATE) {
-      const step = recordStep(state, action, null, null, null, confidence, reasoning, latencyMs);
+      const step = recordStep(
+        state,
+        action,
+        null,
+        null,
+        null,
+        confidence,
+        reasoning,
+        latencyMs,
+      );
       deps.onIteration?.(state, step);
       await finishTask(task, "escalated", deps);
       return { type: "escalated", reason: reasoning, payload };
     }
 
     if (action === STANDARD_ACTIONS.CLARIFY || action === "ask_clarification") {
-      const question = payload.generation?.response_text
-        ?? payload.final_output?.text
-        ?? "Could you clarify?";
-      const step = recordStep(state, action, null, null, null, confidence, reasoning, latencyMs);
+      const question =
+        payload.generation?.response_text ??
+        payload.final_output?.text ??
+        "Could you clarify?";
+      const step = recordStep(
+        state,
+        action,
+        null,
+        null,
+        null,
+        confidence,
+        reasoning,
+        latencyMs,
+      );
       deps.onIteration?.(state, step);
       await finishTask(task, "waiting_clarification", deps);
       return {
@@ -222,12 +309,23 @@ export async function executeEvent(
     }
 
     if (action === STANDARD_ACTIONS.DELEGATE) {
-      const step = recordStep(state, action, null, null, null, confidence, reasoning, latencyMs);
+      const step = recordStep(
+        state,
+        action,
+        null,
+        null,
+        null,
+        confidence,
+        reasoning,
+        latencyMs,
+      );
       deps.onIteration?.(state, step);
       await finishTask(task, "completed", deps);
       return {
         type: "delegated",
-        targetRole: (orch as unknown as Record<string, unknown>).delegate_to_role as string ?? "unknown",
+        targetRole:
+          ((orch as unknown as Record<string, unknown>)
+            .delegate_to_role as string) ?? "unknown",
         payload,
       };
     }
@@ -235,11 +333,98 @@ export async function executeEvent(
     // ─── Tool Execution ──────────────────────────────────
     if (action === STANDARD_ACTIONS.USE_TOOL || action === "use_tool") {
       if (!toolName) {
-        const step = recordStep(state, action, null, null, null, confidence, "No tool name provided", latencyMs);
+        // Brain said use_tool without specifying which tool — this is a
+        // malformed decision. Abort immediately to prevent infinite loops
+        // (dalil: INVALID_REASONING → failTask).
+        const step = recordStep(
+          state,
+          action,
+          null,
+          null,
+          null,
+          confidence,
+          "INVALID_REASONING: use_tool without tool_name",
+          latencyMs,
+        );
         deps.onIteration?.(state, step);
-        // Brain said use_tool but didn't specify which — treat as error, continue
-        state.iteration++;
-        continue;
+        await finishTask(task, "failed", deps);
+        return {
+          type: "error",
+          error: "Brain returned use_tool without a valid tool_name",
+          payload,
+        };
+      }
+
+      // Control bus: check if tool is disabled
+      if (deps.controlBus) {
+        const disableReason = await deps.controlBus.isToolDisabled(toolName);
+        if (disableReason) {
+          const step = recordStep(
+            state,
+            action,
+            toolName,
+            toolParams,
+            {
+              tool: toolName,
+              status: "failed",
+              result: { reason: `Tool disabled: ${disableReason}` },
+            },
+            confidence,
+            `Tool disabled: ${disableReason}`,
+            latencyMs,
+          );
+          deps.onIteration?.(state, step);
+          state.iteration++;
+          lastToolResult = step.toolResult!;
+          continue;
+        }
+      }
+
+      // Rate limit check
+      if (deps.tools.checkRateLimit) {
+        const retryAfterMs = deps.tools.checkRateLimit(toolName);
+        if (retryAfterMs > 0) {
+          deps.onGuard?.({ type: "rate_limited", toolName, retryAfterMs });
+          const step = recordStep(
+            state,
+            action,
+            toolName,
+            toolParams,
+            {
+              tool: toolName,
+              status: "failed",
+              result: { reason: "Rate limited", retryAfterMs },
+            },
+            confidence,
+            `Rate limited: retry after ${retryAfterMs}ms`,
+            latencyMs,
+          );
+          deps.onIteration?.(state, step);
+          state.iteration++;
+          lastToolResult = step.toolResult!;
+          continue;
+        }
+      }
+
+      // Dedup check — skip redundant same tool + same params calls
+      if (deps.config.toolDedup) {
+        const dedup = checkDedup(toolName, toolParams ?? {}, state.recentSteps);
+        if (dedup.isDuplicate && dedup.cachedResult) {
+          const step = recordStep(
+            state,
+            action,
+            toolName,
+            toolParams,
+            dedup.cachedResult,
+            confidence,
+            "Dedup: returning cached result",
+            latencyMs,
+          );
+          deps.onIteration?.(state, step);
+          lastToolResult = dedup.cachedResult;
+          state.iteration++;
+          continue;
+        }
       }
 
       // Validate tool if adapter supports it
@@ -247,9 +432,18 @@ export async function executeEvent(
         const validation = deps.tools.validate(toolName, toolParams ?? {});
         if (!validation.valid) {
           const step = recordStep(
-            state, action, toolName, toolParams,
-            { tool: toolName, status: "failed", result: { errors: validation.errors } },
-            confidence, `Validation failed: ${validation.errors.join(", ")}`, latencyMs,
+            state,
+            action,
+            toolName,
+            toolParams,
+            {
+              tool: toolName,
+              status: "failed",
+              result: { errors: validation.errors },
+            },
+            confidence,
+            `Validation failed: ${validation.errors.join(", ")}`,
+            latencyMs,
           );
           deps.onIteration?.(state, step);
           state.iteration++;
@@ -261,12 +455,25 @@ export async function executeEvent(
       // Check approval if needed
       const toolDef = deps.tools.list().find((t) => t.name === toolName);
       if (toolDef?.requiresApproval && deps.delivery.requestApproval) {
-        const approved = await deps.delivery.requestApproval(sessionId, toolName, toolParams ?? {});
+        const approved = await deps.delivery.requestApproval(
+          sessionId,
+          toolName,
+          toolParams ?? {},
+        );
         if (!approved) {
           const step = recordStep(
-            state, action, toolName, toolParams,
-            { tool: toolName, status: "failed", result: { reason: "Approval denied" } },
-            confidence, "User denied approval", latencyMs,
+            state,
+            action,
+            toolName,
+            toolParams,
+            {
+              tool: toolName,
+              status: "failed",
+              result: { reason: "Approval denied" },
+            },
+            confidence,
+            "User denied approval",
+            latencyMs,
           );
           deps.onIteration?.(state, step);
           state.iteration++;
@@ -291,8 +498,14 @@ export async function executeEvent(
 
       // Record step
       const step = recordStep(
-        state, action, toolName, toolParams, toolResult,
-        confidence, reasoning, latencyMs + toolLatency,
+        state,
+        action,
+        toolName,
+        toolParams,
+        toolResult,
+        confidence,
+        reasoning,
+        latencyMs + toolLatency,
       );
       task.steps.push(step);
       await deps.memory.addStep(taskId, step);
@@ -321,16 +534,26 @@ export async function executeEvent(
 
     // ─── Custom Action ───────────────────────────────────
     // Actions beyond the standard 5 — let the caller handle them
-    const step = recordStep(state, action, null, null, null, confidence, reasoning, latencyMs);
+    const step = recordStep(
+      state,
+      action,
+      null,
+      null,
+      null,
+      confidence,
+      reasoning,
+      latencyMs,
+    );
     deps.onIteration?.(state, step);
     await finishTask(task, "completed", deps);
     return { type: "custom", action, payload };
   }
 
   // Loop exhausted without terminal action
-  const fallbackText = lastPayload?.final_output?.text
-    ?? lastPayload?.generation?.response_text
-    ?? "I was unable to complete this task.";
+  const fallbackText =
+    lastPayload?.final_output?.text ??
+    lastPayload?.generation?.response_text ??
+    "I was unable to complete this task.";
   await finishTask(task, "completed", deps);
   return {
     type: "response",

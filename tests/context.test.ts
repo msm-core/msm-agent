@@ -18,7 +18,11 @@ function makeState(overrides: Partial<RunState> = {}): RunState {
 describe("context builder", () => {
   it("builds basic brain input from conversation", async () => {
     const memory = new InMemoryAdapter();
-    await memory.addMessage("s1", { role: "user", content: "Hello", timestamp: new Date().toISOString() });
+    await memory.addMessage("s1", {
+      role: "user",
+      content: "Hello",
+      timestamp: new Date().toISOString(),
+    });
 
     const input = await buildContext({
       sessionId: "s1",
@@ -56,15 +60,23 @@ describe("context builder", () => {
       task: null,
     });
 
-    // Should be compressed to last 6
-    expect(input.history).toHaveLength(6);
-    expect(input.history[0].content).toBe("Message 6");
-    expect(input.history[5].content).toBe("Message 11");
+    // Should be: 1 summary prefix + 6 tail = 7 entries
+    expect(input.history).toHaveLength(7);
+    // First entry is the summary of dropped messages
+    expect(input.history[0].role).toBe("assistant");
+    expect(input.history[0].content).toContain("Earlier conversation summary");
+    // Tail is the last 6
+    expect(input.history[1].content).toBe("Message 6");
+    expect(input.history[6].content).toBe("Message 11");
   });
 
   it("includes tool result when provided as lastToolResult", async () => {
     const memory = new InMemoryAdapter();
-    const toolResult = { tool: "search", status: "ok" as const, result: { data: "found" } };
+    const toolResult = {
+      tool: "search",
+      status: "ok" as const,
+      result: { data: "found" },
+    };
 
     const input = await buildContext({
       sessionId: "s1",
@@ -90,7 +102,11 @@ describe("context builder", () => {
           action: "use_tool",
           toolName: "api_call",
           toolParams: {},
-          toolResult: { tool: "api_call", status: "ok", result: { data: "result" } },
+          toolResult: {
+            tool: "api_call",
+            status: "ok",
+            result: { data: "result" },
+          },
           confidence: 0.9,
           reasoning: "",
           costUsd: 0,
@@ -116,9 +132,21 @@ describe("context builder", () => {
 
   it("excludes system messages from history", async () => {
     const memory = new InMemoryAdapter();
-    await memory.addMessage("s1", { role: "system", content: "You are helpful", timestamp: new Date().toISOString() });
-    await memory.addMessage("s1", { role: "user", content: "Hi", timestamp: new Date().toISOString() });
-    await memory.addMessage("s1", { role: "assistant", content: "Hello!", timestamp: new Date().toISOString() });
+    await memory.addMessage("s1", {
+      role: "system",
+      content: "You are helpful",
+      timestamp: new Date().toISOString(),
+    });
+    await memory.addMessage("s1", {
+      role: "user",
+      content: "Hi",
+      timestamp: new Date().toISOString(),
+    });
+    await memory.addMessage("s1", {
+      role: "assistant",
+      content: "Hello!",
+      timestamp: new Date().toISOString(),
+    });
 
     const input = await buildContext({
       sessionId: "s1",

@@ -23,6 +23,9 @@ export type {
   TaskPlan,
   TaskState,
   TaskStatus,
+  ActionReceipt,
+  ResponseEvidence,
+  ControlCommand,
 } from "./core/types.js";
 export { DEFAULT_CONFIG } from "./core/types.js";
 
@@ -45,15 +48,30 @@ export {
   getCurrentStep,
 } from "./core/planner.js";
 
+// ─── Tool Dedup ──────────────────────────────────────────────
+export { checkDedup } from "./core/tool-dedup.js";
+export type { DedupResult } from "./core/tool-dedup.js";
+
+// ─── Flush Gate ──────────────────────────────────────────────
+export { FlushGate } from "./core/flush-gate.js";
+export type { FlushGateOptions } from "./core/flush-gate.js";
+
 // ─── Context Builder ─────────────────────────────────────────
 export { buildContext } from "./core/context.js";
 export type { BrainInput, ContextOptions } from "./core/context.js";
 
 // ─── Adapter Interfaces ─────────────────────────────────────
 export type { MemoryAdapter, MemoryEntry } from "./adapters/memory.js";
-export type { ToolAdapter, ToolDefinition, ToolParameter, ToolValidationResult } from "./adapters/tools.js";
+export type {
+  ToolAdapter,
+  ToolDefinition,
+  ToolParameter,
+  ToolRateLimit,
+  ToolValidationResult,
+} from "./adapters/tools.js";
 export type { EventAdapter } from "./adapters/events.js";
 export type { DeliveryAdapter } from "./adapters/delivery.js";
+export type { ControlBusAdapter } from "./adapters/control-bus.js";
 
 // ─── Dummy Adapters (testing & demos) ────────────────────────
 export { InMemoryAdapter } from "./adapters-dummy/memory.js";
@@ -61,3 +79,4 @@ export { MockToolAdapter } from "./adapters-dummy/tools.js";
 export type { MockToolResponse } from "./adapters-dummy/tools.js";
 export { ManualEventAdapter } from "./adapters-dummy/events.js";
 export { ConsoleDeliveryAdapter } from "./adapters-dummy/delivery.js";
+export { InMemoryControlBus } from "./adapters-dummy/control-bus.js";

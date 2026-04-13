@@ -29,6 +29,8 @@ export interface AgentConfig {
   costCapPerTask: number;
   /** Maximum wall-clock time per task in ms (0 = unlimited) */
   timeoutMs: number;
+  /** Enable tool dedup — eliminate redundant tool calls (default: true) */
+  toolDedup: boolean;
 }
 
 export const DEFAULT_CONFIG: AgentConfig = {
@@ -37,6 +39,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   confidenceThreshold: 0.6,
   costCapPerTask: 0,
   timeoutMs: 0,
+  toolDedup: true,
 };
 
 // ─── Events ──────────────────────────────────────────────────
@@ -74,7 +77,8 @@ export type TaskStatus =
   | "waiting_clarification"
   | "completed"
   | "failed"
-  | "escalated";
+  | "escalated"
+  | "aborted";
 
 export interface TaskPlan {
   steps: PlanStep[];
@@ -149,7 +153,9 @@ export type GuardSignal =
   | { type: "dead_end"; failureCount: number; toolCount: number }
   | { type: "budget_cost"; totalCost: number; cap: number }
   | { type: "budget_time"; elapsedMs: number; cap: number }
-  | { type: "budget_iterations"; iteration: number; max: number };
+  | { type: "budget_iterations"; iteration: number; max: number }
+  | { type: "rate_limited"; toolName: string; retryAfterMs: number }
+  | { type: "aborted"; taskId: string; reason: string };
 
 // ─── Loop Result ─────────────────────────────────────────────
 
@@ -170,6 +176,7 @@ export type LoopOutcome =
     }
   | { type: "delegated"; targetRole: string; payload: MSMPayload }
   | { type: "error"; error: string; payload?: MSMPayload }
+  | { type: "aborted"; taskId: string; reason: string }
   | { type: "custom"; action: string; payload: MSMPayload };
 
 // ─── Agent Handle ────────────────────────────────────────────
@@ -182,3 +189,32 @@ export interface AgentHandle {
   /** Stop listening for events */
   stop(): Promise<void>;
 }
+
+// ─── Audit Trail ─────────────────────────────────────────────
+
+/** Customer-visible confirmation of a tool execution */
+export interface ActionReceipt {
+  action: string;
+  reference: string;
+  summary: string;
+  timestamp: string;
+}
+
+/** Internal evidence linking tool call → result for observability */
+export interface ResponseEvidence {
+  toolName: string;
+  toolParams: Record<string, unknown>;
+  toolResult: Record<string, unknown>;
+  costUsd: number;
+  latencyMs: number;
+  timestamp: string;
+}
+
+// ─── Control Commands ────────────────────────────────────────
+
+export type ControlCommand =
+  | { type: "pause_tenant"; tenantId: string; reason: string }
+  | { type: "resume_tenant"; tenantId: string }
+  | { type: "kill_task"; taskId: string; reason: string }
+  | { type: "disable_tool"; toolName: string; reason: string }
+  | { type: "enable_tool"; toolName: string };
