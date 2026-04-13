@@ -1,13 +1,13 @@
 /**
  * Flush Gate — Fire-and-forget event buffering for durability.
  *
- * In dalil: Buffers events (tool results, metrics, audit entries) in memory,
- *           then atomically flushes to DB on a periodic timer.
- *           Prevents data loss if worker dies mid-iteration while avoiding
- *           per-event write latency.
+ * Buffers events (tool results, metrics, audit entries) in memory,
+ * then atomically flushes to a sink on a periodic timer.
+ * Prevents data loss if a worker dies mid-iteration while avoiding
+ * per-event write latency.
  *
- * msm-agent implementation: Generic buffered emitter. Projects wire this
- * to their persistence layer (MongoDB, Postgres, Redis, etc.).
+ * Generic buffered emitter. Projects wire this to their persistence
+ * layer (MongoDB, Postgres, Redis, etc.).
  */
 
 export interface FlushGateOptions<T> {

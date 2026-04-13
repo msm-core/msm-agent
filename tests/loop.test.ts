@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { executeEvent, type LoopDeps } from "../src/core/loop.js";
 import { DEFAULT_CONFIG } from "../src/core/types.js";
-import type { AgentEvent, Brain, AgentConfig } from "../src/core/types.js";
 import type {
-  MSMPayload,
-  OrchestrationOutput,
-  GenerationOutput,
-  FinalOutput,
-} from "msm-ai";
+  AgentEvent,
+  Brain,
+  AgentConfig,
+  BrainPayload,
+  BrainOrchestration,
+  BrainGeneration,
+  BrainFinalOutput,
+} from "../src/core/types.js";
 import { InMemoryAdapter } from "../src/adapters-dummy/memory.js";
 import { MockToolAdapter } from "../src/adapters-dummy/tools.js";
 import { ConsoleDeliveryAdapter } from "../src/adapters-dummy/delivery.js";
@@ -15,8 +17,8 @@ import { ConsoleDeliveryAdapter } from "../src/adapters-dummy/delivery.js";
 // ─── Helpers ─────────────────────────────────────────────────
 
 function makeOrch(
-  overrides: Partial<OrchestrationOutput> = {},
-): OrchestrationOutput {
+  overrides: Partial<BrainOrchestration> = {},
+): BrainOrchestration {
   return {
     model_id: "test",
     model_ver: "1.0",
@@ -33,7 +35,7 @@ function makeOrch(
   };
 }
 
-function makeGeneration(text: string): GenerationOutput {
+function makeGeneration(text: string): BrainGeneration {
   return {
     model_id: "test",
     model_ver: "1.0",
@@ -46,7 +48,7 @@ function makeGeneration(text: string): GenerationOutput {
   };
 }
 
-function makeFinalOutput(text: string): FinalOutput {
+function makeBrainFinalOutput(text: string): BrainFinalOutput {
   return {
     text,
     language: "en",
@@ -55,7 +57,7 @@ function makeFinalOutput(text: string): FinalOutput {
   };
 }
 
-function makePayload(overrides: Partial<MSMPayload> = {}): MSMPayload {
+function makePayload(overrides: Partial<BrainPayload> = {}): BrainPayload {
   return {
     msm_version: "3.0.0",
     session_id: "test-session",
@@ -64,13 +66,13 @@ function makePayload(overrides: Partial<MSMPayload> = {}): MSMPayload {
     input: { raw: "test", modality: "text" },
     orchestration: makeOrch(),
     generation: makeGeneration("Hello!"),
-    final_output: makeFinalOutput("Hello!"),
+    final_output: makeBrainFinalOutput("Hello!"),
     ...overrides,
   };
 }
 
 /** Create a brain that returns a sequence of payloads (one per call) */
-function sequenceBrain(...payloads: MSMPayload[]): Brain {
+function sequenceBrain(...payloads: BrainPayload[]): Brain {
   let callIndex = 0;
   return {
     async run() {
@@ -82,7 +84,7 @@ function sequenceBrain(...payloads: MSMPayload[]): Brain {
 }
 
 /** Create a brain that always returns the same payload */
-function staticBrain(payload: MSMPayload): Brain {
+function staticBrain(payload: BrainPayload): Brain {
   return {
     async run() {
       return payload;
@@ -114,7 +116,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("The answer is 42."),
-          final_output: makeFinalOutput("The answer is 42."),
+          final_output: makeBrainFinalOutput("The answer is 42."),
         }),
       );
 
@@ -154,7 +156,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "clarify" }),
           generation: makeGeneration("What size do you want?"),
-          final_output: makeFinalOutput("What size do you want?"),
+          final_output: makeBrainFinalOutput("What size do you want?"),
         }),
       );
 
@@ -177,7 +179,7 @@ describe("execution loop", () => {
               reasoning: "Sending to billing",
             }),
             delegate_to_role: "billing_agent",
-          } as OrchestrationOutput,
+          } as BrainOrchestration,
         }),
       );
 
@@ -224,7 +226,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Found 3 pizza places."),
-          final_output: makeFinalOutput("Found 3 pizza places."),
+          final_output: makeBrainFinalOutput("Found 3 pizza places."),
         }),
       );
 
@@ -256,7 +258,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Sorry, that failed."),
-          final_output: makeFinalOutput("Sorry, that failed."),
+          final_output: makeBrainFinalOutput("Sorry, that failed."),
         }),
       );
 
@@ -293,7 +295,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Recovered from crash."),
-          final_output: makeFinalOutput("Recovered from crash."),
+          final_output: makeBrainFinalOutput("Recovered from crash."),
         }),
       );
 
@@ -315,7 +317,7 @@ describe("execution loop", () => {
 
     it("aborts on use_tool with no tool_name", async () => {
       // Brain says use_tool but forgets tool_name — must abort immediately
-      // to prevent infinite loop (dalil: INVALID_REASONING → failTask)
+      // to prevent infinite loop (INVALID_REASONING → failTask)
       const brain = sequenceBrain(
         makePayload({
           orchestration: makeOrch({ action: "use_tool" }), // no tool_name
@@ -341,7 +343,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Validation failed, responding."),
-          final_output: makeFinalOutput("Validation failed, responding."),
+          final_output: makeBrainFinalOutput("Validation failed, responding."),
         }),
       );
 
@@ -373,7 +375,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Approval denied."),
-          final_output: makeFinalOutput("Approval denied."),
+          final_output: makeBrainFinalOutput("Approval denied."),
         }),
       );
 
@@ -415,7 +417,7 @@ describe("execution loop", () => {
             confidence: 0.3, // Below 0.6 threshold
           }),
           generation: makeGeneration("Can you clarify what you mean?"),
-          final_output: makeFinalOutput("Can you clarify what you mean?"),
+          final_output: makeBrainFinalOutput("Can you clarify what you mean?"),
         }),
       );
 
@@ -482,7 +484,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("All done."),
-          final_output: makeFinalOutput("All done."),
+          final_output: makeBrainFinalOutput("All done."),
         }),
       );
 
@@ -537,7 +539,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Done."),
-          final_output: makeFinalOutput("Done."),
+          final_output: makeBrainFinalOutput("Done."),
         }),
       );
 
@@ -582,7 +584,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Got the callback."),
-          final_output: makeFinalOutput("Got the callback."),
+          final_output: makeBrainFinalOutput("Got the callback."),
         }),
       );
 
@@ -606,7 +608,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Webhook processed."),
-          final_output: makeFinalOutput("Webhook processed."),
+          final_output: makeBrainFinalOutput("Webhook processed."),
         }),
       );
 
@@ -626,7 +628,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Cron job done."),
-          final_output: makeFinalOutput("Cron job done."),
+          final_output: makeBrainFinalOutput("Cron job done."),
         }),
       );
 
@@ -648,7 +650,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Hi there!"),
-          final_output: makeFinalOutput("Hi there!"),
+          final_output: makeBrainFinalOutput("Hi there!"),
         }),
       );
 
@@ -669,7 +671,7 @@ describe("execution loop", () => {
         makePayload({
           orchestration: makeOrch({ action: "respond" }),
           generation: makeGeneration("Done."),
-          final_output: makeFinalOutput("Done."),
+          final_output: makeBrainFinalOutput("Done."),
         }),
       );
 

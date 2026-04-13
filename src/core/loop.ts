@@ -1,7 +1,7 @@
 /**
- * Execution Loop — The core agent loop extracted from dalil's executeTask().
+ * Execution Loop — The core agent loop.
  *
- * dalil's 22-step loop simplified to the universal pattern:
+ * The universal execution pattern:
  *
  *   event → input guard → context → brain → guard → dispatch:
  *     terminal (respond/escalate/clarify/delegate) → sanitize → deliver → done
@@ -11,7 +11,7 @@
  * Production features:
  *   - Task resumption: tool_callback/user_message/approval_callback resume existing tasks
  *   - Durable approval: async approval flow with waiting_approval status
- *   - AbortSignal: kill-task can interrupt in-flight tool calls (polled during execution)
+ *   - AbortSignal: kill-task can interrupt in-flight tool calls
  *   - Distributed dedup: ToolAdapter.checkIdempotency() for cross-worker safety
  *   - Cost tracking: costExtractor hook for brain-reported LLM costs
  *   - Evidence chain: ResponseEvidence + ActionReceipt on terminal outcomes
@@ -24,11 +24,10 @@
  *   - Tool call budget: maxToolCallsPerTask guard
  */
 
-import type { MSMPayload, ToolResult } from "msm-ai";
-import { STANDARD_ACTIONS } from "msm-ai";
 import type {
   AgentConfig,
   Brain,
+  BrainPayload,
   LoopOutcome,
   RunState,
   StepResult,
@@ -37,7 +36,9 @@ import type {
   ResponseEvidence,
   ActionReceipt,
   ResponseFormat,
+  ToolResult,
 } from "./types.js";
+import { STANDARD_ACTIONS } from "./types.js";
 import type { MemoryAdapter } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
 import type { DeliveryAdapter } from "../adapters/delivery.js";
@@ -78,11 +79,11 @@ export interface LoopDeps {
    * Called after every brain.run() to track cumulative cost.
    * If not provided, cost tracking remains at 0.
    */
-  costExtractor?: (payload: MSMPayload) => number;
+  costExtractor?: (payload: BrainPayload) => number;
   /**
    * Optional: called when a multi-step plan is created.
    * Use to send acknowledge messages ("Let me check for you...").
-   * Not called for single-step plans (dalil pattern: suppress ack for trivials).
+   * Not called for single-step plans (suppress ack for single-step plans).
    */
   onPlanCreated?: (
     sessionId: string,
@@ -91,7 +92,7 @@ export interface LoopDeps {
   /**
    * Optional: called on fatal error to produce a user-friendly recovery message.
    * If provided, the repair message is delivered to the user before returning the error.
-   * dalil pattern: repairConversation() sends "Sorry, something went wrong..."
+   * sends "Sorry, something went wrong..."
    */
   onFatalError?: (sessionId: string, error: string) => Promise<string>;
   /**
@@ -108,7 +109,7 @@ export interface LoopDeps {
 /**
  * Execute a single agent event through the brain loop.
  *
- * This is the heart of the agent — the equivalent of dalil's executeTask().
+ * This is the heart of the agent — the equivalent of the production execution engine.
  */
 export async function executeEvent(
   event: AgentEvent,
@@ -216,7 +217,7 @@ export async function executeEvent(
   });
 
   // Initialize run state (carry forward tool call count if resumed)
-  // Try to load durable run state if available (dalil: Redis with TTL)
+  // Try to load durable run state if available (e.g. Redis with TTL)
   const priorToolCalls = resumed
     ? task.steps.filter((s) => s.toolResult !== null).length
     : 0;
@@ -243,7 +244,7 @@ export async function executeEvent(
   }
 
   let lastToolResult: ToolResult | undefined;
-  let lastPayload: MSMPayload | undefined;
+  let lastPayload: BrainPayload | undefined;
 
   // For tool_callback, seed the last tool result from the event
   if (event.type === "tool_callback") {
@@ -322,7 +323,7 @@ export async function executeEvent(
     });
 
     // ─── Call Brain (with error handling) ──────────────────
-    let payload: MSMPayload;
+    let payload: BrainPayload;
     const startMs = Date.now();
     try {
       payload = await deps.brain.run(brainInput);
@@ -330,7 +331,7 @@ export async function executeEvent(
       // Brain call failed — failTask lifecycle instead of unhandled crash
       const error = err instanceof Error ? err.message : String(err);
       await finishTask(task, "failed", deps, error);
-      // Conversation repair: send user-friendly error message (dalil: repairConversation)
+      // Conversation repair: send user-friendly error message (conversation repair)
       if (deps.onFatalError) {
         try {
           const repairMsg = await deps.onFatalError(sessionId, error);
@@ -338,7 +339,7 @@ export async function executeEvent(
             type: "response",
             text: repairMsg,
             language: "en",
-            payload: {} as MSMPayload,
+            payload: {} as BrainPayload,
           });
         } catch {
           // repair itself failed — don't crash
@@ -385,13 +386,13 @@ export async function executeEvent(
     if (orch.plan && orch.plan.length > 0 && !task.plan) {
       task.plan = createPlan(orch.plan, reasoning);
       await deps.memory.updatePlan(taskId, task.plan);
-      // Acknowledge multi-step plans (dalil: suppress for single-step)
+      // Acknowledge multi-step plans (suppress for single-step)
       if (task.plan.steps.length > 1 && deps.onPlanCreated) {
         await deps.onPlanCreated(sessionId, task.plan);
       }
     }
 
-    // Persist run state for durability (dalil: Redis TTL extension)
+    // Persist run state for durability (e.g. Redis TTL extension)
     if (deps.memory.saveRunState) {
       await deps.memory.saveRunState(taskId, state);
     }
@@ -544,9 +545,7 @@ export async function executeEvent(
       await finishTask(task, "completed", deps);
       return {
         type: "delegated",
-        targetRole:
-          ((orch as unknown as Record<string, unknown>)
-            .delegate_to_role as string) ?? "unknown",
+        targetRole: orch.delegate_to_role ?? "unknown",
         payload,
       };
     }
@@ -556,7 +555,7 @@ export async function executeEvent(
       if (!toolName) {
         // Brain said use_tool without specifying which tool — this is a
         // malformed decision. Abort immediately to prevent infinite loops
-        // (dalil: INVALID_REASONING → failTask).
+        // (malformed decision → failTask).
         const step = recordStep(
           state,
           action,
@@ -746,7 +745,7 @@ export async function executeEvent(
         }
       }
 
-      // Extend run state TTL before potentially long tool execution (dalil pattern)
+      // Extend run state TTL before potentially long tool execution (production pattern)
       if (deps.memory.extendRunStateTTL) {
         await deps.memory.extendRunStateTTL(taskId);
       }
@@ -971,24 +970,15 @@ async function finishTask(
  * The brain may include response_format in generation output for rich rendering.
  */
 function extractResponseFormat(
-  payload: MSMPayload | undefined,
+  payload: BrainPayload | undefined,
 ): ResponseFormat | undefined {
-  if (!payload?.generation) return undefined;
-  const gen = payload.generation as unknown as Record<string, unknown>;
-  if (!gen) return undefined;
-  const fmt = gen.response_format as Record<string, unknown> | undefined;
-  if (!fmt || typeof fmt !== "object") return undefined;
-  const fmtType = fmt.type as string | undefined;
+  if (!payload?.generation?.response_format) return undefined;
+  const fmt = payload.generation.response_format;
   if (
-    !fmtType ||
-    !["text", "list", "buttons", "carousel", "confirmation"].includes(fmtType)
+    !fmt.type ||
+    !["text", "list", "buttons", "carousel", "confirmation"].includes(fmt.type)
   ) {
     return undefined;
   }
-  return {
-    type: fmtType as ResponseFormat["type"],
-    items: (fmt.items as ResponseFormat["items"]) ?? undefined,
-    fields: (fmt.fields as ResponseFormat["fields"]) ?? undefined,
-    actions: (fmt.actions as string[]) ?? undefined,
-  };
+  return fmt;
 }

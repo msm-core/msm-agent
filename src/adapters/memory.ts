@@ -1,8 +1,9 @@
 /**
  * MemoryAdapter — How the agent remembers.
  *
- * In dalil: Redis working memory + MongoDB episodic/semantic/procedural/reflection + customer memory.
- * In msm-agent: you bring your own. The dummy adapter uses in-memory Maps.
+ * Production implementations typically use Redis for working memory,
+ * a database (MongoDB/Postgres) for episodic/semantic/procedural layers.
+ * The dummy adapter uses in-memory Maps for testing.
  */
 
 import type {
@@ -35,13 +36,13 @@ export interface MemoryAdapter {
 
   // ─── Optional: Durable Run State ───────────────────────────
   /**
-   * Save ephemeral run state for durability across restarts (dalil: Redis with TTL).
+   * Save ephemeral run state for durability across restarts (e.g. Redis with TTL).
    * If not implemented, run state is in-memory only (lost on restart).
    */
   saveRunState?(taskId: string, state: RunState): Promise<void>;
   /** Load run state for a resumed task */
   loadRunState?(taskId: string): Promise<RunState | null>;
-  /** Extend TTL on run state during long operations (dalil: extendTTL) */
+  /** Extend TTL on run state during long operations (e.g. extendTTL) */
   extendRunStateTTL?(taskId: string): Promise<void>;
 
   // ─── Optional: Semantic/Episodic Memory ────────────────────

@@ -1,18 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { createAgent } from "../src/core/agent.js";
-import type { Brain, AgentEvent } from "../src/core/types.js";
 import type {
-  MSMPayload,
-  OrchestrationOutput,
-  GenerationOutput,
-  FinalOutput,
-} from "msm-ai";
+  Brain,
+  AgentEvent,
+  BrainPayload,
+  BrainOrchestration,
+  BrainGeneration,
+  BrainFinalOutput,
+} from "../src/core/types.js";
 import { InMemoryAdapter } from "../src/adapters-dummy/memory.js";
 import { MockToolAdapter } from "../src/adapters-dummy/tools.js";
 import { ManualEventAdapter } from "../src/adapters-dummy/events.js";
 import { ConsoleDeliveryAdapter } from "../src/adapters-dummy/delivery.js";
 
-function makePayload(text: string): MSMPayload {
+function makePayload(text: string): BrainPayload {
   return {
     msm_version: "3.0.0",
     session_id: "test",
@@ -31,7 +32,7 @@ function makePayload(text: string): MSMPayload {
       estimated_steps: 1,
       mode: "rules",
       reasoning: "",
-    } satisfies OrchestrationOutput,
+    } satisfies BrainOrchestration,
     generation: {
       model_id: "test",
       model_ver: "1.0",
@@ -41,13 +42,13 @@ function makePayload(text: string): MSMPayload {
       response_text: text,
       tone: "neutral",
       word_count: text.split(" ").length,
-    } satisfies GenerationOutput,
+    } satisfies BrainGeneration,
     final_output: {
       text,
       language: "en",
       total_latency_ms: 20,
       pipeline_status: "ok",
-    } satisfies FinalOutput,
+    } satisfies BrainFinalOutput,
   };
 }
 
@@ -153,7 +154,7 @@ describe("createAgent", () => {
             tool_selections: [],
             estimated_steps: 1,
             mode: "rules",
-          } satisfies OrchestrationOutput,
+          } satisfies BrainOrchestration,
           generation: {
             model_id: "test",
             model_ver: "1.0",
@@ -163,7 +164,7 @@ describe("createAgent", () => {
             response_text: "Need more info",
             tone: "neutral",
             word_count: 3,
-          } satisfies GenerationOutput,
+          } satisfies BrainGeneration,
           final_output: {
             text: "Need more info",
             language: "en",

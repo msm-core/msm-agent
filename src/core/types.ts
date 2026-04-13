@@ -2,28 +2,104 @@
  * msm-agent — Core Types
  *
  * Contracts for the agent framework. The agent is the "hands" —
- * it receives events, asks the MSM brain what to do, executes tools,
+ * it receives events, asks the brain what to do, executes tools,
  * feeds results back, and delivers responses.
  *
- * Extracted from dalil's proven execution engine patterns,
+ * Extracted from production execution engine patterns,
  * made generic and pluggable for any project.
+ *
+ * DECOUPLED: This package defines its own types for brain interaction.
+ * Any brain (MSM, OpenAI, Anthropic, custom) can satisfy the Brain interface
+ * by returning a BrainPayload. For MSM integration, use the bridge adapter.
  */
 
-import type {
-  MSMPayload,
-  OrchestrationAction,
-  PlanStep,
-  ToolResult,
-} from "msm-ai";
+// ─── Brain Protocol Types (agent-owned) ──────────────────────
+
+/** Result of a tool execution (tool name + status + result data) */
+export interface ToolResult {
+  tool: string;
+  status: "ok" | "failed" | string;
+  result: Record<string, unknown>;
+}
+
+/** A single step in a multi-step plan */
+export interface PlanStep {
+  id: number;
+  description: string;
+  tool_hint: string | null;
+  status: "pending" | "current" | "done" | "failed";
+}
+
+/** Action type — what the brain decided to do */
+export type OrchestrationAction = string;
+
+/** Standard action constants — brains should use these values */
+export const STANDARD_ACTIONS = {
+  USE_TOOL: "use_tool" as OrchestrationAction,
+  RESPOND: "respond" as OrchestrationAction,
+  CLARIFY: "clarify" as OrchestrationAction,
+  ESCALATE: "escalate" as OrchestrationAction,
+  DELEGATE: "delegate" as OrchestrationAction,
+} as const;
+
+/** The brain's orchestration decision */
+export interface BrainOrchestration {
+  action: OrchestrationAction;
+  confidence: number;
+  tool_name?: string;
+  tool_params?: Record<string, unknown>;
+  reasoning?: string;
+  plan?: PlanStep[];
+  /** Delegation target role (when action is "delegate") */
+  delegate_to_role?: string;
+  /** Any extra fields the brain may return */
+  [key: string]: unknown;
+}
+
+/** The brain's generated response text */
+export interface BrainGeneration {
+  response_text: string;
+  response_text_ar?: string;
+  /** Structured response format for rich channel rendering (buttons, lists, etc.) */
+  response_format?: ResponseFormat;
+  /** Any extra fields the brain may return */
+  [key: string]: unknown;
+}
+
+/** Final assembled output from the brain */
+export interface BrainFinalOutput {
+  text: string;
+  text_ar?: string;
+  language: string;
+  /** When true, tool execution is required before responding */
+  action_required?: boolean;
+  /** Any extra fields the brain may return */
+  [key: string]: unknown;
+}
+
+/**
+ * The payload returned by any brain implementation.
+ *
+ * This is the agent's own contract — not tied to any specific brain.
+ * The MSM pipeline, a raw LLM wrapper, or any custom decision engine
+ * can return this shape.
+ */
+export interface BrainPayload {
+  orchestration?: BrainOrchestration;
+  generation?: BrainGeneration;
+  final_output?: BrainFinalOutput;
+  /** Pass-through for any additional brain-specific data */
+  [key: string]: unknown;
+}
 
 // ─── Agent Configuration ─────────────────────────────────────
 
 export interface AgentConfig {
-  /** Maximum iterations per event before forcing a response (dalil default: 6) */
+  /** Maximum iterations per event before forcing a response (default: 6) */
   maxIterations: number;
-  /** Maximum replans before switching to freestyle (dalil default: 2) */
+  /** Maximum replans before switching to freestyle (default: 2) */
   maxReplans: number;
-  /** Confidence threshold — tool calls below this become clarifications (dalil default: 0.6) */
+  /** Confidence threshold — tool calls below this become clarifications (default: 0.6) */
   confidenceThreshold: number;
   /** Maximum cost per task in USD (0 = unlimited) */
   costCapPerTask: number;
@@ -31,7 +107,7 @@ export interface AgentConfig {
   timeoutMs: number;
   /** Enable tool dedup — eliminate redundant tool calls (default: true) */
   toolDedup: boolean;
-  /** Maximum tool calls per task (0 = unlimited, dalil: maxToolCallsPerTask) */
+  /** Maximum tool calls per task (0 = unlimited) */
   maxToolCallsPerTask: number;
 }
 
@@ -141,8 +217,8 @@ export interface RunState {
 /**
  * The brain decides, the agent executes.
  *
- * Any MSM Pipeline satisfies this interface, but you can also
- * wrap an HTTP endpoint, a mock brain, or any other implementation.
+ * Any decision engine satisfies this interface — MSM pipeline, raw LLM wrapper,
+ * rule engine, or any custom brain. Use the bridge adapter for MSM integration.
  */
 export interface Brain {
   run(input: {
@@ -150,7 +226,7 @@ export interface Brain {
     modality: "text" | "voice" | "image";
     history?: Array<{ role: "user" | "assistant"; content: string }>;
     tool_results?: ToolResult[];
-  }): Promise<MSMPayload>;
+  }): Promise<BrainPayload>;
 }
 
 // ─── Guard Signals ───────────────────────────────────────────
@@ -195,7 +271,7 @@ export type LoopOutcome =
       text: string;
       textAr?: string;
       language: string;
-      payload: MSMPayload;
+      payload: BrainPayload;
       /** Evidence chain from tool executions (if any occurred) */
       evidence?: ResponseEvidence[];
       /** Customer-visible receipts for destructive operations */
@@ -203,12 +279,12 @@ export type LoopOutcome =
       /** Structured response format for rich channel rendering */
       responseFormat?: ResponseFormat;
     }
-  | { type: "escalated"; reason: string; payload: MSMPayload }
+  | { type: "escalated"; reason: string; payload: BrainPayload }
   | {
       type: "clarification";
       question: string;
       questionAr?: string;
-      payload: MSMPayload;
+      payload: BrainPayload;
       /** Task ID to resume when clarification is answered */
       taskId?: string;
     }
@@ -218,12 +294,12 @@ export type LoopOutcome =
       toolName: string;
       toolParams: Record<string, unknown>;
       reasoning: string;
-      payload: MSMPayload;
+      payload: BrainPayload;
     }
-  | { type: "delegated"; targetRole: string; payload: MSMPayload }
-  | { type: "error"; error: string; payload?: MSMPayload }
+  | { type: "delegated"; targetRole: string; payload: BrainPayload }
+  | { type: "error"; error: string; payload?: BrainPayload }
   | { type: "aborted"; taskId: string; reason: string }
-  | { type: "custom"; action: string; payload: MSMPayload };
+  | { type: "custom"; action: string; payload: BrainPayload };
 
 // ─── Agent Handle ────────────────────────────────────────────
 

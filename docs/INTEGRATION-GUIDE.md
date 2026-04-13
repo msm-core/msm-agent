@@ -1,6 +1,6 @@
 # MSM Agent + Brain: Production Integration Guide
 
-> How to build a production-grade AI agent using `msm-agent` (execution core) and `msm-ai` (brain pipeline) — achieving the same level as the battle-tested Dalil platform.
+> How to build a production-grade AI agent using `msm-agent` (execution core) and `msm-ai` (brain pipeline).
 
 ## Table of Contents
 
@@ -333,7 +333,7 @@ interface MemoryAdapter {
 }
 ```
 
-**Production implementation guide (Dalil pattern):**
+**Production implementation guide:**
 
 | Method                       | Storage                              | Notes                                                                                               |
 | ---------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
@@ -345,7 +345,7 @@ interface MemoryAdapter {
 | `search`                     | Qdrant / MongoDB Atlas Vector Search | Embed query → cosine similarity search                                                              |
 | `store`                      | Same vector DB                       | With confidence decay: `effective = confidence × e^(-decayRate × days)`                             |
 
-**Dalil's 5 memory layers (implement via `search` + `system_context`):**
+**Recommended memory layers (implement via `search` + `system_context`):**
 
 1. **Working Memory** — Current task state (built-in via `RunState`)
 2. **Episodic Memory** — Past task summaries (last 10 relevant)
@@ -407,7 +407,7 @@ interface ToolAdapter {
 }
 ```
 
-**Distributed Idempotency (Dalil pattern):**
+**Distributed Idempotency (production pattern):**
 
 ```typescript
 // Redis-based implementation
@@ -583,7 +583,7 @@ bus.execute({
 });
 ```
 
-**Redis implementation (Dalil pattern):**
+**Redis implementation (production pattern):**
 
 ```typescript
 class RedisControlBusAdapter implements ControlBusAdapter {
@@ -1297,7 +1297,7 @@ process.on("SIGTERM", async () => {
 
 ## Production Readiness Checklist
 
-Before claiming Dalil-level production readiness, verify:
+Before claiming production readiness, verify:
 
 ### Infrastructure
 

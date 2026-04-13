@@ -1,15 +1,14 @@
 /**
  * Tool Dedup — Eliminates redundant tool calls before execution.
  *
- * In dalil: SHA-256 based idempotency guard for destructive tools,
- *           plus planning-phase dedup that detects duplicate/conflicting calls.
+ * Two-layer dedup:
+ *   1. In-process: hash-based dedup over recent steps (same tool + same params)
+ *   2. Distributed: ToolAdapter.checkIdempotency() for cross-worker safety
  *
- * msm-agent implementation: hash-based dedup with configurable window.
  * Same tool + same params within the window = skip (return cached result).
  */
 
-import type { ToolResult } from "msm-ai";
-import type { StepResult } from "./types.js";
+import type { ToolResult, StepResult } from "./types.js";
 
 export interface DedupResult {
   isDuplicate: boolean;

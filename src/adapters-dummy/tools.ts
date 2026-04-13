@@ -2,7 +2,7 @@
  * MockToolAdapter — Returns simulated tool responses for testing.
  */
 
-import type { ToolResult } from "msm-ai";
+import type { ToolResult } from "../core/types.js";
 import type {
   ToolAdapter,
   ToolDefinition,

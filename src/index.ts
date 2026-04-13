@@ -1,9 +1,12 @@
 /**
- * msm-agent — Portable Agent Framework for MSM Brain
+ * msm-agent — Portable Agent Framework
  *
- * The agent is the "hands" — it receives events, asks the MSM brain
+ * The agent is the "hands" — it receives events, asks the brain
  * what to do, executes tools, feeds results back, and delivers responses.
- * The brain (MSM) never executes anything — it only decides.
+ * The brain never executes anything — it only decides.
+ *
+ * This package is brain-agnostic. Any brain that returns BrainPayload works.
+ * For MSM integration, use the bridge: import { wrapMSM } from "msm-agent/bridge/msm"
  */
 
 // ─── Core ────────────────────────────────────────────────────
@@ -15,6 +18,13 @@ export type {
   AgentEvent,
   AgentHandle,
   Brain,
+  BrainPayload,
+  BrainOrchestration,
+  BrainGeneration,
+  BrainFinalOutput,
+  ToolResult,
+  PlanStep,
+  OrchestrationAction,
   GuardSignal,
   LoopOutcome,
   Message,
@@ -28,7 +38,7 @@ export type {
   ResponseFormat,
   ControlCommand,
 } from "./core/types.js";
-export { DEFAULT_CONFIG } from "./core/types.js";
+export { DEFAULT_CONFIG, STANDARD_ACTIONS } from "./core/types.js";
 
 // ─── Loop (for advanced usage) ───────────────────────────────
 export { executeEvent } from "./core/loop.js";
@@ -87,3 +97,7 @@ export type { MockToolResponse } from "./adapters-dummy/tools.js";
 export { ManualEventAdapter } from "./adapters-dummy/events.js";
 export { ConsoleDeliveryAdapter } from "./adapters-dummy/delivery.js";
 export { InMemoryControlBus } from "./adapters-dummy/control-bus.js";
+
+// ─── Bridge Adapters (brain integration) ─────────────────────
+export { wrapMSM } from "./bridge/msm.js";
+export type { MSMPipeline } from "./bridge/msm.js";

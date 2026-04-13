@@ -1,7 +1,7 @@
 /**
- * Guards — Safety mechanisms extracted from dalil's execution engine.
+ * Guards — Safety mechanisms for the execution loop.
  *
- * dalil patterns:
+ * Patterns:
  *   - Confidence gate: <0.6 on tool calls → ask_clarification
  *   - Repetition guard: same tool 3+ times → signal LLM
  *   - Dead-end detection: 4+ failures across 2+ tools → signal LLM
@@ -39,7 +39,7 @@ export function checkGuards(
     });
   }
 
-  // ─── Hard: Confidence gate (dalil: 0.6 threshold) ─────────
+  // ─── Hard: Confidence gate (default: 0.6 threshold) ─────────
   if (
     currentAction === "use_tool" &&
     currentConfidence < config.confidenceThreshold
@@ -64,7 +64,7 @@ export function checkGuards(
     });
   }
 
-  // ─── Hard: Tool call limit (dalil: maxToolCallsPerTask) ───
+  // ─── Hard: Tool call limit (configurable limit) ───
   if (
     config.maxToolCallsPerTask > 0 &&
     state.toolCallCount >= config.maxToolCallsPerTask
@@ -88,7 +88,7 @@ export function checkGuards(
     }
   }
 
-  // ─── Soft: Repetition guard (dalil: 3+ same tool) ─────────
+  // ─── Soft: Repetition guard (3+ same tool) ─────────
   if (currentToolName && state.recentSteps.length >= 2) {
     const consecutive = countConsecutiveSameTool(
       state.recentSteps,
@@ -104,7 +104,7 @@ export function checkGuards(
     }
   }
 
-  // ─── Soft: Dead-end detection (dalil: 4+ failures, 2+ tools)
+  // ─── Soft: Dead-end detection (4+ failures, 2+ tools)
   const deadEnd = detectDeadEnd(state.recentSteps);
   if (deadEnd) {
     signals.push(deadEnd);

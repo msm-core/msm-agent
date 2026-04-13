@@ -1,12 +1,12 @@
 /**
  * Input Guard — Prompt injection defense for user input.
  *
- * Extracted from dalil's 3-tier defense:
+ * Two-tier defense:
  *   Tier 1: Pattern matching (fast path) — 13+ hardcoded patterns
  *   Tier 2: Sanitization — length limit, control char removal, tag stripping
  *
- * Tier 2 (embedding-similarity) is project-owned since it requires
- * an embedding model + adversarial blocklist. Use the preHook to plug that in.
+ * For Tier 3 (embedding-similarity), use the preHook to plug in
+ * an embedding model + adversarial blocklist.
  */
 
 /** Maximum allowed input length (truncated beyond this) */

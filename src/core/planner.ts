@@ -1,19 +1,17 @@
 /**
- * Planner — Plan tracking extracted from dalil's planner.
+ * Planner — Plan tracking for the execution loop.
  *
- * dalil patterns:
+ * Patterns:
  *   - Max 3 steps (configurable)
  *   - Skip planning for fast intents (greeting/faq)
  *   - Suppress acknowledge for single-step plans
  *   - Re-plan on failure (max 2 replans)
  *   - After 2 failures → freestyle fallback (clears plan)
  *
- * msm-agent delegates plan GENERATION to the brain (MSM orchestration layer
- * returns plan[] with steps). The planner here just TRACKS state.
+ * The brain generates plans; the planner tracks their execution state.
  */
 
-import type { PlanStep } from "msm-ai";
-import type { TaskPlan } from "./types.js";
+import type { PlanStep, TaskPlan } from "./types.js";
 
 /**
  * Create a plan from the brain's orchestration output.
@@ -57,7 +55,7 @@ export function failPlanStep(plan: TaskPlan): TaskPlan {
   return { ...plan, steps };
 }
 
-/** Can we replan? (dalil: max 2 replans) */
+/** Can we replan? (max 2 replans) */
 export function canReplan(plan: TaskPlan, maxReplans: number): boolean {
   return plan.replanCount < maxReplans;
 }

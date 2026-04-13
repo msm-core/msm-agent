@@ -1,9 +1,8 @@
 /**
  * Context Builder — Assembles brain input from agent state.
  *
- * dalil does 5-layer prompt assembly (Working, Episodic, Semantic, Procedural,
- * Reflection) with strict compaction rules. msm-agent gives you the hooks to
- * replicate that level of sophistication:
+ * Supports multi-layer prompt assembly (working, episodic, semantic, procedural,
+ * reflection) with strict compaction rules:
  *
  *  - Task state is serialized into system_context
  *  - Semantic memory is queried via MemoryAdapter.search() if available
@@ -11,8 +10,7 @@
  *  - Tool results from previous iterations are passed back
  */
 
-import type { ToolResult } from "msm-ai";
-import type { Message, RunState, TaskState } from "./types.js";
+import type { ToolResult, Message, RunState, TaskState } from "./types.js";
 import type { MemoryAdapter, MemoryEntry } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
 

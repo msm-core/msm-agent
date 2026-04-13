@@ -1,8 +1,9 @@
 /**
  * DeliveryAdapter — How the agent delivers responses to users.
  *
- * In dalil: WhatsApp (interactive buttons/lists), Telegram, widget, SSE dashboard.
- * In msm-agent: you bring your own. The dummy adapter logs to console.
+ * Production implementations connect to channels like WhatsApp (interactive
+ * buttons/lists), Telegram, web widgets, or SSE dashboards.
+ * The dummy adapter logs to console for testing.
  */
 
 import type { LoopOutcome } from "../core/types.js";

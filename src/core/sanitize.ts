@@ -1,9 +1,9 @@
 /**
  * Output Sanitization — Strips sensitive data from agent responses.
  *
- * Extracted from dalil's 7+ pattern output guards:
- *   - API keys (GitHub, GitLab, Slack, AWS, generic)
- *   - PII patterns (national IDs, phone numbers)
+ * Detects and redacts:
+ *   - API keys (GitHub, GitLab, Slack, AWS, OpenAI, Anthropic, generic)
+ *   - PII patterns (national IDs, credit cards, SSN)
  *   - Control characters
  *
  * Called before delivery to prevent accidental secret/PII leakage.

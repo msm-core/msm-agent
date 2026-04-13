@@ -15,6 +15,7 @@ import type {
   AgentEvent,
   AgentHandle,
   Brain,
+  BrainPayload,
   LoopOutcome,
   GuardSignal,
   Message,
@@ -63,7 +64,7 @@ export interface CreateAgentOptions {
    * Optional: extract cost in USD from a brain payload.
    * Called after every brain.run() to track cumulative cost per task.
    */
-  costExtractor?: (payload: import("msm-ai").MSMPayload) => number;
+  costExtractor?: (payload: BrainPayload) => number;
   /**
    * Optional: called when a multi-step plan is created (>1 step).
    * Use to send acknowledge messages ("Let me check for you...").

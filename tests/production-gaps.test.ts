@@ -21,13 +21,11 @@ import type {
   RunState,
   TaskState,
   TaskPlan,
+  BrainPayload,
+  BrainOrchestration,
+  BrainGeneration,
+  BrainFinalOutput,
 } from "../src/core/types.js";
-import type {
-  MSMPayload,
-  OrchestrationOutput,
-  GenerationOutput,
-  FinalOutput,
-} from "msm-ai";
 import { InMemoryAdapter } from "../src/adapters-dummy/memory.js";
 import { MockToolAdapter } from "../src/adapters-dummy/tools.js";
 import { ManualEventAdapter } from "../src/adapters-dummy/events.js";
@@ -64,8 +62,8 @@ function makeTask(overrides: Partial<TaskState> = {}): TaskState {
 }
 
 function makeOrch(
-  overrides: Partial<OrchestrationOutput> = {},
-): OrchestrationOutput {
+  overrides: Partial<BrainOrchestration> = {},
+): BrainOrchestration {
   return {
     model_id: "test",
     model_ver: "1.0",
@@ -82,7 +80,7 @@ function makeOrch(
   };
 }
 
-function makePayload(overrides: Partial<MSMPayload> = {}): MSMPayload {
+function makePayload(overrides: Partial<BrainPayload> = {}): BrainPayload {
   return {
     msm_version: "3.0.0",
     session_id: "test",

@@ -9,11 +9,21 @@ import {
   isPlanComplete,
   getCurrentStep,
 } from "../src/core/planner.js";
-import type { PlanStep } from "msm-ai";
+import type { PlanStep } from "../src/core/types.js";
 
 const sampleSteps: PlanStep[] = [
-  { id: 1, description: "Search inventory", tool_hint: "search_api", status: "pending" },
-  { id: 2, description: "Check pricing", tool_hint: "price_api", status: "pending" },
+  {
+    id: 1,
+    description: "Search inventory",
+    tool_hint: "search_api",
+    status: "pending",
+  },
+  {
+    id: 2,
+    description: "Check pricing",
+    tool_hint: "price_api",
+    status: "pending",
+  },
   { id: 3, description: "Respond to user", tool_hint: null, status: "pending" },
 ];
 
@@ -83,7 +93,12 @@ describe("planner", () => {
     it("creates a new plan with incremented replanCount", () => {
       const plan = createPlan(sampleSteps, "original");
       const newSteps: PlanStep[] = [
-        { id: 1, description: "New approach", tool_hint: "alt_api", status: "pending" },
+        {
+          id: 1,
+          description: "New approach",
+          tool_hint: "alt_api",
+          status: "pending",
+        },
       ];
       const replanned = replan(plan, newSteps, "trying different approach");
       expect(replanned.replanCount).toBe(1);

@@ -1,8 +1,9 @@
 /**
  * EventAdapter — How the agent receives work.
  *
- * In dalil: BullMQ queues (10 queues), WhatsApp/Telegram webhooks, cron jobs.
- * In msm-agent: you bring your own. The dummy adapter is programmatic (manual trigger).
+ * Production implementations connect to message queues (BullMQ, SQS),
+ * webhooks (WhatsApp, Telegram), and cron schedulers.
+ * The dummy adapter is programmatic (manual trigger) for testing.
  */
 
 import type { AgentEvent } from "../core/types.js";

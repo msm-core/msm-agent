@@ -1,18 +1,18 @@
 /**
  * ToolAdapter — How the agent executes tools.
  *
- * In dalil: 14 tool categories, 17 ERP operations, 13 connectors, destructive marking,
- *           approval gates, dedup guard, tool gateway.
- * In msm-agent: you bring your own. The dummy adapter returns mock responses.
+ * Production implementations include tool catalogs, schema validation,
+ * approval gates, dedup guards, and rate limiting.
+ * The dummy adapter returns mock responses for testing.
  */
 
-import type { ToolResult } from "msm-ai";
+import type { ToolResult } from "../core/types.js";
 
 export interface ToolDefinition {
   name: string;
   description: string;
   parameters: Record<string, ToolParameter>;
-  /** Destructive tools get dedup protection (dalil: SHA-256 idempotency) */
+  /** Destructive tools get dedup protection (SHA-256 based idempotency) */
   destructive?: boolean;
   /** Tools requiring human approval before execution */
   requiresApproval?: boolean;
@@ -51,7 +51,7 @@ export interface ToolAdapter {
     signal?: AbortSignal,
   ): Promise<ToolResult>;
 
-  /** Optional: validate params before execution (dalil: 7-check validation) */
+  /** Optional: validate params before execution (multi-step validation) */
   validate?(
     name: string,
     params: Record<string, unknown>,

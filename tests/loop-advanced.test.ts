@@ -1,13 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { executeEvent, type LoopDeps } from "../src/core/loop.js";
 import { DEFAULT_CONFIG } from "../src/core/types.js";
-import type { AgentEvent, Brain, AgentConfig } from "../src/core/types.js";
 import type {
-  MSMPayload,
-  OrchestrationOutput,
-  GenerationOutput,
-  FinalOutput,
-} from "msm-ai";
+  AgentEvent,
+  Brain,
+  AgentConfig,
+  BrainPayload,
+  BrainOrchestration,
+  BrainGeneration,
+  BrainFinalOutput,
+} from "../src/core/types.js";
 import { InMemoryAdapter } from "../src/adapters-dummy/memory.js";
 import { MockToolAdapter } from "../src/adapters-dummy/tools.js";
 import { ConsoleDeliveryAdapter } from "../src/adapters-dummy/delivery.js";
@@ -16,8 +18,8 @@ import { InMemoryControlBus } from "../src/adapters-dummy/control-bus.js";
 // ─── Helpers ─────────────────────────────────────────────────
 
 function makeOrch(
-  overrides: Partial<OrchestrationOutput> = {},
-): OrchestrationOutput {
+  overrides: Partial<BrainOrchestration> = {},
+): BrainOrchestration {
   return {
     model_id: "test",
     model_ver: "1.0",
@@ -34,7 +36,7 @@ function makeOrch(
   };
 }
 
-function makePayload(overrides: Partial<MSMPayload> = {}): MSMPayload {
+function makePayload(overrides: Partial<BrainPayload> = {}): BrainPayload {
   return {
     msm_version: "3.0.0",
     session_id: "test-session",
@@ -62,7 +64,7 @@ function makePayload(overrides: Partial<MSMPayload> = {}): MSMPayload {
   };
 }
 
-function sequenceBrain(...payloads: MSMPayload[]): Brain {
+function sequenceBrain(...payloads: BrainPayload[]): Brain {
   let callIndex = 0;
   return {
     async run() {
@@ -73,7 +75,7 @@ function sequenceBrain(...payloads: MSMPayload[]): Brain {
   };
 }
 
-function staticBrain(payload: MSMPayload): Brain {
+function staticBrain(payload: BrainPayload): Brain {
   return {
     async run() {
       return payload;

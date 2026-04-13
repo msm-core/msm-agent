@@ -1,12 +1,11 @@
 /**
  * ControlBusAdapter — Runtime operability for the agent.
  *
- * In dalil: Redis-backed command dispatcher with Lua atomic operations.
- *   - PAUSE_TENANT, RESUME_TENANT, KILL_TASK, DISABLE_TOOL, ENABLE_TOOL
- *   - Checked every iteration of the execution loop
+ * Commands: PAUSE_TENANT, RESUME_TENANT, KILL_TASK, DISABLE_TOOL, ENABLE_TOOL
+ * Checked every iteration of the execution loop.
  *
- * In msm-agent: you bring your own. The dummy adapter uses in-memory state.
- * Production implementations would use Redis, a database, or a message bus.
+ * Production implementations typically use Redis with atomic operations.
+ * The dummy adapter uses in-memory state for testing.
  */
 
 import type { ControlCommand } from "../core/types.js";
