@@ -7,14 +7,14 @@
  *     terminal (respond/escalate/clarify/delegate) → deliver → done
  *     use_tool → validate → execute → record → plan advance → loop
  *
- * dalil-specific things NOT here (pluggable via adapters instead):
- *   - WhatsApp typing indicators (DeliveryAdapter.sendTyping)
- *   - DCA approval gates (ToolAdapter + DeliveryAdapter.requestApproval)
- *   - NL auto-approve classifier (project-specific)
- *   - Multi-agent delegation chain (project-specific)
- *   - Channel-specific formatting (DeliveryAdapter)
- *   - C2 control bus (project-specific)
- *   - 5-layer memory loading (MemoryAdapter)
+ * Production features:
+ *   - Task resumption: tool_callback/user_message resume existing tasks
+ *   - AbortSignal: kill-task can interrupt in-flight tool calls
+ *   - Distributed dedup: ToolAdapter.checkIdempotency() for cross-worker safety
+ *   - Cost tracking: costExtractor hook for brain-reported LLM costs
+ *   - Evidence chain: ResponseEvidence + ActionReceipt on terminal outcomes
+ *   - Brain error handling: try/catch with failTask lifecycle
+ *   - Tool call budget: maxToolCallsPerTask guard
  */
 
 import type { MSMPayload, ToolResult } from "msm-ai";
@@ -27,6 +27,8 @@ import type {
   StepResult,
   TaskState,
   AgentEvent,
+  ResponseEvidence,
+  ActionReceipt,
 } from "./types.js";
 import type { MemoryAdapter } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
@@ -61,6 +63,12 @@ export interface LoopDeps {
   compactHistory?: (
     messages: import("./types.js").Message[],
   ) => Promise<Array<{ role: "user" | "assistant"; content: string }>>;
+  /**
+   * Optional: extract cost in USD from a brain payload.
+   * Called after every brain.run() to track cumulative cost.
+   * If not provided, cost tracking remains at 0.
+   */
+  costExtractor?: (payload: MSMPayload) => number;
 }
 
 /**
@@ -71,9 +79,12 @@ export interface LoopDeps {
 export async function executeEvent(
   event: AgentEvent,
   deps: LoopDeps,
+  /** Optional override for session ID (used by createAgent to pass stable cron IDs) */
+  sessionIdOverride?: string,
 ): Promise<LoopOutcome> {
   const sessionId =
-    "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
+    sessionIdOverride ??
+    ("sessionId" in event ? event.sessionId : `cron-${Date.now()}`);
   const text =
     event.type === "user_message"
       ? event.text
@@ -85,20 +96,45 @@ export async function executeEvent(
   const modality =
     event.type === "user_message" ? event.modality : ("text" as const);
 
-  // Create task
-  const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const task: TaskState = {
-    taskId,
-    sessionId,
-    status: "running",
-    plan: null,
-    steps: [],
-    totalCostUsd: 0,
-    startedAt: new Date().toISOString(),
-    completedAt: null,
-    error: null,
-  };
-  await deps.memory.saveTask(task);
+  // ─── Task Resumption ─────────────────────────────────────
+  // For tool_callback: resume the referenced task
+  // For user_message: check for an active waiting task to resume
+  // Otherwise: create a new task
+  let task: TaskState;
+  let resumed = false;
+
+  if (event.type === "tool_callback") {
+    const existing = await deps.memory.getTask(event.taskId);
+    if (
+      existing &&
+      (existing.status === "waiting_tool" || existing.status === "running")
+    ) {
+      task = existing;
+      task.status = "running";
+      await deps.memory.updateTaskStatus(task.taskId, "running");
+      resumed = true;
+    } else {
+      // Stale callback — create fresh task
+      task = createNewTask(sessionId);
+      await deps.memory.saveTask(task);
+    }
+  } else if (event.type === "user_message" && deps.memory.getActiveTask) {
+    const active = await deps.memory.getActiveTask(sessionId);
+    if (active && active.status === "waiting_clarification") {
+      task = active;
+      task.status = "running";
+      await deps.memory.updateTaskStatus(task.taskId, "running");
+      resumed = true;
+    } else {
+      task = createNewTask(sessionId);
+      await deps.memory.saveTask(task);
+    }
+  } else {
+    task = createNewTask(sessionId);
+    await deps.memory.saveTask(task);
+  }
+
+  const taskId = task.taskId;
 
   // Record user message
   await deps.memory.addMessage(sessionId, {
@@ -107,17 +143,30 @@ export async function executeEvent(
     timestamp: new Date().toISOString(),
   });
 
-  // Initialize run state
+  // Initialize run state (carry forward tool call count if resumed)
+  const priorToolCalls = resumed
+    ? task.steps.filter((s) => s.toolResult !== null).length
+    : 0;
   const state: RunState = {
     iteration: 0,
-    totalCostUsd: 0,
+    totalCostUsd: resumed ? task.totalCostUsd : 0,
     startTime: Date.now(),
-    replanCount: 0,
-    recentSteps: [],
+    replanCount: resumed ? (task.plan?.replanCount ?? 0) : 0,
+    toolCallCount: priorToolCalls,
+    recentSteps: resumed ? task.steps.slice(-10) : [],
   };
 
   let lastToolResult: ToolResult | undefined;
   let lastPayload: MSMPayload | undefined;
+
+  // For tool_callback, seed the last tool result from the event
+  if (event.type === "tool_callback") {
+    lastToolResult = event.result;
+  }
+
+  // AbortController for in-flight tool calls
+  let toolAbortController: AbortController | null =
+    null as AbortController | null;
 
   // ─── The Loop ────────────────────────────────────────────
   while (state.iteration < deps.config.maxIterations) {
@@ -125,6 +174,8 @@ export async function executeEvent(
     if (deps.controlBus) {
       const killReason = await deps.controlBus.isTaskKilled(taskId);
       if (killReason) {
+        // Abort any in-flight tool call
+        toolAbortController?.abort();
         deps.onGuard?.({ type: "aborted", taskId, reason: killReason });
         await finishTask(task, "aborted", deps);
         return { type: "aborted", taskId, reason: killReason };
@@ -132,6 +183,7 @@ export async function executeEvent(
       if (deps.tenantId) {
         const pauseReason = await deps.controlBus.isTenantPaused(deps.tenantId);
         if (pauseReason) {
+          toolAbortController?.abort();
           deps.onGuard?.({
             type: "aborted",
             taskId,
@@ -163,15 +215,39 @@ export async function executeEvent(
       compactHistory: deps.compactHistory,
     });
 
-    // Call brain
+    // ─── Call Brain (with error handling) ──────────────────
+    let payload: MSMPayload;
     const startMs = Date.now();
-    const payload = await deps.brain.run(brainInput);
+    try {
+      payload = await deps.brain.run(brainInput);
+    } catch (err) {
+      // Brain call failed — failTask lifecycle instead of unhandled crash
+      const error = err instanceof Error ? err.message : String(err);
+      await finishTask(task, "failed", deps, error);
+      return {
+        type: "error",
+        error: `Brain call failed: ${error}`,
+      };
+    }
     const latencyMs = Date.now() - startMs;
     lastPayload = payload;
+
+    // ─── Cost Tracking ────────────────────────────────────
+    if (deps.costExtractor) {
+      const iterationCost = deps.costExtractor(payload);
+      state.totalCostUsd += iterationCost;
+      task.totalCostUsd = state.totalCostUsd;
+    }
 
     // Extract brain's decision from orchestration layer
     const orch = payload.orchestration;
     if (!orch) {
+      await finishTask(
+        task,
+        "failed",
+        deps,
+        "Brain returned no orchestration output",
+      );
       return {
         type: "error",
         error: "Brain returned no orchestration output",
@@ -212,7 +288,12 @@ export async function executeEvent(
           payload.final_output?.text ??
           "Could you provide more details?";
         await finishTask(task, "waiting_clarification", deps);
-        return { type: "clarification", question: clarifyText, payload };
+        return {
+          type: "clarification",
+          question: clarifyText,
+          payload,
+          taskId,
+        };
       }
 
       // Budget/iteration limit → force respond with whatever we have
@@ -220,6 +301,7 @@ export async function executeEvent(
         payload.final_output?.text ??
         payload.generation?.response_text ??
         "I was unable to complete this task within the allowed limits.";
+      const { evidence, receipts } = buildEvidence(task.steps);
       await finishTask(task, "completed", deps);
       return {
         type: "response",
@@ -227,6 +309,8 @@ export async function executeEvent(
         textAr: payload.generation?.response_text_ar,
         language: payload.final_output?.language ?? "en",
         payload,
+        evidence: evidence.length > 0 ? evidence : undefined,
+        receipts: receipts.length > 0 ? receipts : undefined,
       };
     }
 
@@ -257,6 +341,7 @@ export async function executeEvent(
         timestamp: new Date().toISOString(),
       });
 
+      const { evidence, receipts } = buildEvidence(task.steps);
       await finishTask(task, "completed", deps);
       return {
         type: "response",
@@ -264,6 +349,8 @@ export async function executeEvent(
         textAr: payload.generation?.response_text_ar,
         language: payload.final_output?.language ?? "en",
         payload,
+        evidence: evidence.length > 0 ? evidence : undefined,
+        receipts: receipts.length > 0 ? receipts : undefined,
       };
     }
 
@@ -305,6 +392,7 @@ export async function executeEvent(
         question,
         questionAr: payload.generation?.response_text_ar,
         payload,
+        taskId,
       };
     }
 
@@ -347,7 +435,7 @@ export async function executeEvent(
           latencyMs,
         );
         deps.onIteration?.(state, step);
-        await finishTask(task, "failed", deps);
+        await finishTask(task, "failed", deps, "use_tool without tool_name");
         return {
           type: "error",
           error: "Brain returned use_tool without a valid tool_name",
@@ -406,7 +494,33 @@ export async function executeEvent(
         }
       }
 
-      // Dedup check — skip redundant same tool + same params calls
+      // ─── Distributed Idempotency Check ─────────────────
+      const toolDef = deps.tools.list().find((t) => t.name === toolName);
+      if (toolDef?.destructive && deps.tools.checkIdempotency) {
+        const cached = await deps.tools.checkIdempotency(
+          toolName,
+          toolParams ?? {},
+        );
+        if (cached) {
+          const step = recordStep(
+            state,
+            action,
+            toolName,
+            toolParams,
+            cached,
+            confidence,
+            "Idempotency: returning distributed cached result",
+            latencyMs,
+          );
+          deps.onIteration?.(state, step);
+          lastToolResult = cached;
+          state.iteration++;
+          state.toolCallCount++;
+          continue;
+        }
+      }
+
+      // In-process dedup (fallback for non-destructive or when no distributed adapter)
       if (deps.config.toolDedup) {
         const dedup = checkDedup(toolName, toolParams ?? {}, state.recentSteps);
         if (dedup.isDuplicate && dedup.cachedResult) {
@@ -453,7 +567,6 @@ export async function executeEvent(
       }
 
       // Check approval if needed
-      const toolDef = deps.tools.list().find((t) => t.name === toolName);
       if (toolDef?.requiresApproval && deps.delivery.requestApproval) {
         const approved = await deps.delivery.requestApproval(
           sessionId,
@@ -482,19 +595,51 @@ export async function executeEvent(
         }
       }
 
-      // Execute the tool
+      // Execute the tool with AbortSignal
+      toolAbortController = new AbortController();
       const toolStart = Date.now();
       let toolResult: ToolResult;
       try {
-        toolResult = await deps.tools.execute(toolName, toolParams ?? {});
+        toolResult = await deps.tools.execute(
+          toolName,
+          toolParams ?? {},
+          toolAbortController.signal,
+        );
       } catch (err) {
         toolResult = {
           tool: toolName,
           status: "failed",
-          result: { error: err instanceof Error ? err.message : String(err) },
+          result: {
+            error: err instanceof Error ? err.message : String(err),
+            aborted: toolAbortController.signal.aborted,
+          },
         };
       }
       const toolLatency = Date.now() - toolStart;
+      toolAbortController = null;
+
+      // Post-execution control bus check (catch kills during tool execution)
+      if (deps.controlBus) {
+        const killReason = await deps.controlBus.isTaskKilled(taskId);
+        if (killReason) {
+          deps.onGuard?.({ type: "aborted", taskId, reason: killReason });
+          await finishTask(task, "aborted", deps);
+          return { type: "aborted", taskId, reason: killReason };
+        }
+      }
+
+      // Record distributed idempotency for successful destructive calls
+      if (
+        toolDef?.destructive &&
+        toolResult.status === "ok" &&
+        deps.tools.recordIdempotency
+      ) {
+        await deps.tools.recordIdempotency(
+          toolName,
+          toolParams ?? {},
+          toolResult,
+        );
+      }
 
       // Record step
       const step = recordStep(
@@ -507,9 +652,9 @@ export async function executeEvent(
         reasoning,
         latencyMs + toolLatency,
       );
-      task.steps.push(step);
       await deps.memory.addStep(taskId, step);
       deps.onIteration?.(state, step);
+      state.toolCallCount++;
 
       // Plan management
       if (toolResult.status === "ok" && task.plan) {
@@ -554,16 +699,33 @@ export async function executeEvent(
     lastPayload?.final_output?.text ??
     lastPayload?.generation?.response_text ??
     "I was unable to complete this task.";
+  const { evidence, receipts } = buildEvidence(task.steps);
   await finishTask(task, "completed", deps);
   return {
     type: "response",
     text: fallbackText,
     language: lastPayload?.final_output?.language ?? "en",
     payload: lastPayload!,
+    evidence: evidence.length > 0 ? evidence : undefined,
+    receipts: receipts.length > 0 ? receipts : undefined,
   };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
+
+function createNewTask(sessionId: string): TaskState {
+  return {
+    taskId: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    sessionId,
+    status: "running",
+    plan: null,
+    steps: [],
+    totalCostUsd: 0,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    error: null,
+  };
+}
 
 function recordStep(
   state: RunState,
@@ -583,7 +745,7 @@ function recordStep(
     toolResult,
     confidence,
     reasoning,
-    costUsd: 0, // TODO: track from LLM usage when available
+    costUsd: 0,
     latencyMs,
     timestamp: new Date().toISOString(),
   };
@@ -595,12 +757,53 @@ function recordStep(
   return step;
 }
 
+/**
+ * Build evidence chain and action receipts from completed steps.
+ * Evidence = internal observability. Receipts = customer-visible confirmations.
+ */
+function buildEvidence(steps: StepResult[]): {
+  evidence: ResponseEvidence[];
+  receipts: ActionReceipt[];
+} {
+  const evidence: ResponseEvidence[] = [];
+  const receipts: ActionReceipt[] = [];
+
+  for (const step of steps) {
+    if (step.toolName && step.toolResult) {
+      evidence.push({
+        toolName: step.toolName,
+        toolParams: step.toolParams ?? {},
+        toolResult: step.toolResult.result as Record<string, unknown>,
+        costUsd: step.costUsd,
+        latencyMs: step.latencyMs,
+        timestamp: step.timestamp,
+      });
+
+      // Generate receipts for successful tool calls
+      if (step.toolResult.status === "ok") {
+        receipts.push({
+          action: step.toolName,
+          reference: `${step.toolName}-${step.iteration}`,
+          summary: step.reasoning || `Executed ${step.toolName}`,
+          timestamp: step.timestamp,
+        });
+      }
+    }
+  }
+
+  return { evidence, receipts };
+}
+
 async function finishTask(
   task: TaskState,
   status: TaskState["status"],
   deps: LoopDeps,
+  error?: string,
 ): Promise<void> {
   task.status = status;
   task.completedAt = new Date().toISOString();
+  if (error) {
+    task.error = error;
+  }
   await deps.memory.updateTaskStatus(task.taskId, status);
 }

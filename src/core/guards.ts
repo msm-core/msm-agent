@@ -64,6 +64,18 @@ export function checkGuards(
     });
   }
 
+  // ─── Hard: Tool call limit (dalil: maxToolCallsPerTask) ───
+  if (
+    config.maxToolCallsPerTask > 0 &&
+    state.toolCallCount >= config.maxToolCallsPerTask
+  ) {
+    signals.push({
+      type: "budget_tool_calls",
+      toolCallCount: state.toolCallCount,
+      max: config.maxToolCallsPerTask,
+    });
+  }
+
   // ─── Hard: Time limit ──────────────────────────────────────
   if (config.timeoutMs > 0) {
     const elapsed = Date.now() - state.startTime;
@@ -108,7 +120,8 @@ export function hasHardBlock(signals: GuardSignal[]): boolean {
       s.type === "confidence_low" ||
       s.type === "budget_cost" ||
       s.type === "budget_time" ||
-      s.type === "budget_iterations",
+      s.type === "budget_iterations" ||
+      s.type === "budget_tool_calls",
   );
 }
 

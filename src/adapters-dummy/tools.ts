@@ -3,7 +3,11 @@
  */
 
 import type { ToolResult } from "msm-ai";
-import type { ToolAdapter, ToolDefinition, ToolValidationResult } from "../adapters/tools.js";
+import type {
+  ToolAdapter,
+  ToolDefinition,
+  ToolValidationResult,
+} from "../adapters/tools.js";
 
 export interface MockToolResponse {
   status: "ok" | "failed";
@@ -28,7 +32,11 @@ export class MockToolAdapter implements ToolAdapter {
     return this.definitions;
   }
 
-  async execute(name: string, _params: Record<string, unknown>): Promise<ToolResult> {
+  async execute(
+    name: string,
+    _params: Record<string, unknown>,
+    _signal?: AbortSignal,
+  ): Promise<ToolResult> {
     const mock = this.responses.get(name);
     if (mock?.latencyMs) {
       await new Promise((r) => setTimeout(r, mock.latencyMs));
@@ -37,10 +45,17 @@ export class MockToolAdapter implements ToolAdapter {
       return { tool: name, status: mock.status, result: mock.result };
     }
     // Default: return a generic success
-    return { tool: name, status: "ok", result: { message: `Mock ${name} executed` } };
+    return {
+      tool: name,
+      status: "ok",
+      result: { message: `Mock ${name} executed` },
+    };
   }
 
-  validate(name: string, _params: Record<string, unknown>): ToolValidationResult {
+  validate(
+    name: string,
+    _params: Record<string, unknown>,
+  ): ToolValidationResult {
     const def = this.definitions.find((t) => t.name === name);
     if (!def) {
       return { valid: false, errors: [`Unknown tool: ${name}`] };

@@ -2,7 +2,12 @@
  * InMemoryAdapter — Zero-infrastructure memory for testing and demos.
  */
 
-import type { Message, TaskState, TaskPlan, StepResult } from "../core/types.js";
+import type {
+  Message,
+  TaskState,
+  TaskPlan,
+  StepResult,
+} from "../core/types.js";
 import type { MemoryAdapter, MemoryEntry } from "../adapters/memory.js";
 
 export class InMemoryAdapter implements MemoryAdapter {
@@ -42,7 +47,10 @@ export class InMemoryAdapter implements MemoryAdapter {
     }
   }
 
-  async updateTaskStatus(taskId: string, status: TaskState["status"]): Promise<void> {
+  async updateTaskStatus(
+    taskId: string,
+    status: TaskState["status"],
+  ): Promise<void> {
     const task = this.tasks.get(taskId);
     if (task) {
       task.status = status;
@@ -58,6 +66,27 @@ export class InMemoryAdapter implements MemoryAdapter {
 
   async store(entry: MemoryEntry): Promise<void> {
     this.memories.push(entry);
+  }
+
+  /**
+   * Find an active (resumable) task for a session.
+   * Returns the most recent task in waiting_tool, waiting_clarification, or running state.
+   */
+  async getActiveTask(sessionId: string): Promise<TaskState | null> {
+    const resumableStatuses = new Set([
+      "waiting_tool",
+      "waiting_clarification",
+      "running",
+    ]);
+    let best: TaskState | null = null;
+    for (const task of this.tasks.values()) {
+      if (task.sessionId === sessionId && resumableStatuses.has(task.status)) {
+        if (!best || task.startedAt > best.startedAt) {
+          best = task;
+        }
+      }
+    }
+    return best;
   }
 
   /** Test helper: get all tasks */

@@ -40,8 +40,16 @@ export interface ToolAdapter {
   /** List available tools (brain uses these to decide what to call) */
   list(): ToolDefinition[];
 
-  /** Execute a tool by name with parameters */
-  execute(name: string, params: Record<string, unknown>): Promise<ToolResult>;
+  /**
+   * Execute a tool by name with parameters.
+   * @param signal Optional AbortSignal — if aborted mid-call, implementation
+   *   should throw or return a failed result. Enables kill-task during execution.
+   */
+  execute(
+    name: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<ToolResult>;
 
   /** Optional: validate params before execution (dalil: 7-check validation) */
   validate?(
@@ -51,6 +59,26 @@ export interface ToolAdapter {
 
   /** Optional: check rate limit before execution. Returns ms to wait, or 0 if ok. */
   checkRateLimit?(name: string): number;
+
+  /**
+   * Optional: distributed idempotency check.
+   * Returns cached result if this exact call was already made (Redis NX pattern).
+   * Use for cross-worker dedup of destructive operations.
+   */
+  checkIdempotency?(
+    toolName: string,
+    params: Record<string, unknown>,
+  ): Promise<ToolResult | null>;
+
+  /**
+   * Optional: record a tool result for distributed idempotency.
+   * Called after successful destructive tool execution.
+   */
+  recordIdempotency?(
+    toolName: string,
+    params: Record<string, unknown>,
+    result: ToolResult,
+  ): Promise<void>;
 }
 
 export interface ToolValidationResult {

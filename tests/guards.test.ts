@@ -25,6 +25,7 @@ function makeState(overrides: Partial<RunState> = {}): RunState {
     totalCostUsd: 0,
     startTime: Date.now(),
     replanCount: 0,
+    toolCallCount: 0,
     recentSteps: [],
     ...overrides,
   };
@@ -33,19 +34,37 @@ function makeState(overrides: Partial<RunState> = {}): RunState {
 describe("guards", () => {
   describe("confidence gate", () => {
     it("fires on low-confidence tool call", () => {
-      const signals = checkGuards(makeState(), DEFAULT_CONFIG, "use_tool", 0.3, "search");
+      const signals = checkGuards(
+        makeState(),
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.3,
+        "search",
+      );
       expect(signals).toContainEqual(
         expect.objectContaining({ type: "confidence_low", action: "clarify" }),
       );
     });
 
     it("does NOT fire on non-tool actions even with low confidence", () => {
-      const signals = checkGuards(makeState(), DEFAULT_CONFIG, "respond", 0.1, null);
+      const signals = checkGuards(
+        makeState(),
+        DEFAULT_CONFIG,
+        "respond",
+        0.1,
+        null,
+      );
       expect(signals.find((s) => s.type === "confidence_low")).toBeUndefined();
     });
 
     it("does NOT fire when confidence meets threshold", () => {
-      const signals = checkGuards(makeState(), DEFAULT_CONFIG, "use_tool", 0.6, "search");
+      const signals = checkGuards(
+        makeState(),
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.6,
+        "search",
+      );
       expect(signals.find((s) => s.type === "confidence_low")).toBeUndefined();
     });
   });
@@ -53,16 +72,34 @@ describe("guards", () => {
   describe("iteration budget", () => {
     it("fires when iteration >= maxIterations", () => {
       const state = makeState({ iteration: 6 });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals).toContainEqual(
-        expect.objectContaining({ type: "budget_iterations", iteration: 6, max: 6 }),
+        expect.objectContaining({
+          type: "budget_iterations",
+          iteration: 6,
+          max: 6,
+        }),
       );
     });
 
     it("does NOT fire under limit", () => {
       const state = makeState({ iteration: 5 });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
-      expect(signals.find((s) => s.type === "budget_iterations")).toBeUndefined();
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
+      expect(
+        signals.find((s) => s.type === "budget_iterations"),
+      ).toBeUndefined();
     });
   });
 
@@ -78,7 +115,13 @@ describe("guards", () => {
 
     it("does NOT fire when costCap is 0 (unlimited)", () => {
       const state = makeState({ totalCostUsd: 100 });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals.find((s) => s.type === "budget_cost")).toBeUndefined();
     });
   });
@@ -95,7 +138,13 @@ describe("guards", () => {
 
     it("does NOT fire when timeoutMs is 0 (unlimited)", () => {
       const state = makeState({ startTime: Date.now() - 999999 });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals.find((s) => s.type === "budget_time")).toBeUndefined();
     });
   });
@@ -107,9 +156,19 @@ describe("guards", () => {
         makeStep({ toolName: "search" }),
       ];
       const state = makeState({ recentSteps: steps });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals).toContainEqual(
-        expect.objectContaining({ type: "repetition", toolName: "search", count: 3 }),
+        expect.objectContaining({
+          type: "repetition",
+          toolName: "search",
+          count: 3,
+        }),
       );
     });
 
@@ -119,14 +178,26 @@ describe("guards", () => {
         makeStep({ toolName: "other_tool" }),
       ];
       const state = makeState({ recentSteps: steps });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals.find((s) => s.type === "repetition")).toBeUndefined();
     });
 
     it("does NOT fire with fewer than 2 prior same-tool calls", () => {
       const steps = [makeStep({ toolName: "search" })];
       const state = makeState({ recentSteps: steps });
-      const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "search");
+      const signals = checkGuards(
+        state,
+        DEFAULT_CONFIG,
+        "use_tool",
+        0.9,
+        "search",
+      );
       expect(signals.find((s) => s.type === "repetition")).toBeUndefined();
     });
   });
@@ -134,10 +205,22 @@ describe("guards", () => {
   describe("dead-end detection", () => {
     it("fires on 4+ failures across 2+ tools", () => {
       const steps = [
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "b", toolResult: { tool: "b", status: "failed", result: {} } }),
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "b", toolResult: { tool: "b", status: "failed", result: {} } }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "b",
+          toolResult: { tool: "b", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "b",
+          toolResult: { tool: "b", status: "failed", result: {} },
+        }),
       ];
       const state = makeState({ recentSteps: steps });
       const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "c");
@@ -148,10 +231,22 @@ describe("guards", () => {
 
     it("does NOT fire if failures are all from the same tool", () => {
       const steps = [
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
       ];
       const state = makeState({ recentSteps: steps });
       const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "a");
@@ -160,9 +255,18 @@ describe("guards", () => {
 
     it("does NOT fire with fewer than 4 failures", () => {
       const steps = [
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
-        makeStep({ toolName: "b", toolResult: { tool: "b", status: "failed", result: {} } }),
-        makeStep({ toolName: "a", toolResult: { tool: "a", status: "failed", result: {} } }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "b",
+          toolResult: { tool: "b", status: "failed", result: {} },
+        }),
+        makeStep({
+          toolName: "a",
+          toolResult: { tool: "a", status: "failed", result: {} },
+        }),
       ];
       const state = makeState({ recentSteps: steps });
       const signals = checkGuards(state, DEFAULT_CONFIG, "use_tool", 0.9, "c");
@@ -172,18 +276,37 @@ describe("guards", () => {
 
   describe("hasHardBlock", () => {
     it("returns true for confidence_low", () => {
-      expect(hasHardBlock([{ type: "confidence_low", confidence: 0.3, threshold: 0.6, action: "clarify" }])).toBe(true);
+      expect(
+        hasHardBlock([
+          {
+            type: "confidence_low",
+            confidence: 0.3,
+            threshold: 0.6,
+            action: "clarify",
+          },
+        ]),
+      ).toBe(true);
     });
 
     it("returns true for budget signals", () => {
-      expect(hasHardBlock([{ type: "budget_cost", totalCost: 1, cap: 0.5 }])).toBe(true);
-      expect(hasHardBlock([{ type: "budget_time", elapsedMs: 2000, cap: 1000 }])).toBe(true);
-      expect(hasHardBlock([{ type: "budget_iterations", iteration: 6, max: 6 }])).toBe(true);
+      expect(
+        hasHardBlock([{ type: "budget_cost", totalCost: 1, cap: 0.5 }]),
+      ).toBe(true);
+      expect(
+        hasHardBlock([{ type: "budget_time", elapsedMs: 2000, cap: 1000 }]),
+      ).toBe(true);
+      expect(
+        hasHardBlock([{ type: "budget_iterations", iteration: 6, max: 6 }]),
+      ).toBe(true);
     });
 
     it("returns false for soft signals only", () => {
-      expect(hasHardBlock([{ type: "repetition", toolName: "x", count: 3 }])).toBe(false);
-      expect(hasHardBlock([{ type: "dead_end", failureCount: 4, toolCount: 2 }])).toBe(false);
+      expect(
+        hasHardBlock([{ type: "repetition", toolName: "x", count: 3 }]),
+      ).toBe(false);
+      expect(
+        hasHardBlock([{ type: "dead_end", failureCount: 4, toolCount: 2 }]),
+      ).toBe(false);
     });
 
     it("returns false for empty array", () => {

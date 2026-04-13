@@ -27,6 +27,10 @@ import type { DeliveryAdapter } from "../adapters/delivery.js";
 import type { ControlBusAdapter } from "../adapters/control-bus.js";
 import { executeEvent, type LoopDeps } from "./loop.js";
 
+function resolveSessionId(event: AgentEvent): string {
+  return "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
+}
+
 export interface CreateAgentOptions {
   brain: Brain;
   memory: MemoryAdapter;
@@ -55,6 +59,11 @@ export interface CreateAgentOptions {
   compactHistory?: (
     messages: Message[],
   ) => Promise<Array<{ role: "user" | "assistant"; content: string }>>;
+  /**
+   * Optional: extract cost in USD from a brain payload.
+   * Called after every brain.run() to track cumulative cost per task.
+   */
+  costExtractor?: (payload: import("msm-ai").MSMPayload) => number;
 }
 
 /**
@@ -104,32 +113,31 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     onIteration: options.onIteration,
     onGuard: options.onGuard,
     compactHistory: options.compactHistory,
+    costExtractor: options.costExtractor,
   };
 
   /** Execute an event with pre-hook and session mutex */
-  async function processEvent(event: AgentEvent): Promise<LoopOutcome> {
-    const sessionId =
-      "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
-
+  async function processEvent(
+    event: AgentEvent,
+    sessionId = resolveSessionId(event),
+  ): Promise<LoopOutcome> {
     return mutex.acquire(sessionId, async () => {
       // Fast-intent pre-hook: skip brain loop for trivials
       if (options.preHook) {
         const shortCircuit = await options.preHook(event);
         if (shortCircuit) {
-          await options.delivery.send(sessionId, shortCircuit);
           return shortCircuit;
         }
       }
 
-      return executeEvent(event, deps);
+      return executeEvent(event, deps, sessionId);
     });
   }
 
   // Wire event adapter → processEvent → delivery
   options.events.onEvent(async (event: AgentEvent) => {
-    const outcome = await processEvent(event);
-    const sessionId =
-      "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
+    const sessionId = resolveSessionId(event);
+    const outcome = await processEvent(event, sessionId);
     await options.delivery.send(sessionId, outcome);
   });
 

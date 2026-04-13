@@ -23,7 +23,13 @@ export interface MemoryAdapter {
   updatePlan(taskId: string, plan: TaskPlan): Promise<void>;
   addStep(taskId: string, step: StepResult): Promise<void>;
   updateTaskStatus(taskId: string, status: TaskState["status"]): Promise<void>;
-
+  // ─── Optional: Task Resumption ───────────────────────────────
+  /**
+   * Find the most recent active (resumable) task for a session.
+   * Returns a task in waiting_tool, waiting_clarification, or running state.
+   * Required for first-class approval/callback resumption workflows.
+   */
+  getActiveTask?(sessionId: string): Promise<TaskState | null>;
   // ─── Optional: Semantic/Episodic Memory ────────────────────
   /** Search memory by natural language query (for context enrichment) */
   search?(query: string, limit: number): Promise<MemoryEntry[]>;

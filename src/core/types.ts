@@ -31,6 +31,8 @@ export interface AgentConfig {
   timeoutMs: number;
   /** Enable tool dedup — eliminate redundant tool calls (default: true) */
   toolDedup: boolean;
+  /** Maximum tool calls per task (0 = unlimited, dalil: maxToolCallsPerTask) */
+  maxToolCallsPerTask: number;
 }
 
 export const DEFAULT_CONFIG: AgentConfig = {
@@ -40,6 +42,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   costCapPerTask: 0,
   timeoutMs: 0,
   toolDedup: true,
+  maxToolCallsPerTask: 0,
 };
 
 // ─── Events ──────────────────────────────────────────────────
@@ -119,6 +122,8 @@ export interface RunState {
   totalCostUsd: number;
   startTime: number;
   replanCount: number;
+  /** Total tool calls made in this task (for maxToolCallsPerTask guard) */
+  toolCallCount: number;
   /** Last N steps for guard checks */
   recentSteps: StepResult[];
 }
@@ -154,6 +159,7 @@ export type GuardSignal =
   | { type: "budget_cost"; totalCost: number; cap: number }
   | { type: "budget_time"; elapsedMs: number; cap: number }
   | { type: "budget_iterations"; iteration: number; max: number }
+  | { type: "budget_tool_calls"; toolCallCount: number; max: number }
   | { type: "rate_limited"; toolName: string; retryAfterMs: number }
   | { type: "aborted"; taskId: string; reason: string };
 
@@ -166,6 +172,10 @@ export type LoopOutcome =
       textAr?: string;
       language: string;
       payload: MSMPayload;
+      /** Evidence chain from tool executions (if any occurred) */
+      evidence?: ResponseEvidence[];
+      /** Customer-visible receipts for destructive operations */
+      receipts?: ActionReceipt[];
     }
   | { type: "escalated"; reason: string; payload: MSMPayload }
   | {
@@ -173,6 +183,8 @@ export type LoopOutcome =
       question: string;
       questionAr?: string;
       payload: MSMPayload;
+      /** Task ID to resume when clarification is answered */
+      taskId?: string;
     }
   | { type: "delegated"; targetRole: string; payload: MSMPayload }
   | { type: "error"; error: string; payload?: MSMPayload }

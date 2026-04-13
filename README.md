@@ -8,6 +8,12 @@ Extracted from the production-proven execution engine of the [Dalil AI](https://
 npm install msm-agent msm-ai
 ```
 
+## Production Readiness Guide
+
+For Dalil parity status, ownership boundaries (what belongs to brain vs agent vs project), and a concrete integration checklist, see:
+
+- [docs/production-readiness-and-boundary.md](docs/production-readiness-and-boundary.md)
+
 ## Architecture
 
 ```
@@ -606,12 +612,10 @@ const agent = createAgent({
       },
       ...old.map((m) => ({ role: m.role, content: m.content })),
     ]);
-    const tail = messages
-      .slice(-6)
-      .map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+    const tail = messages.slice(-6).map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
     return [
       { role: "assistant", content: `[Conversation summary] ${summary}` },
       ...tail,
@@ -931,12 +935,10 @@ const agent = createAgent({
         content: m.content,
       }));
     const summary = await summarizeLLM(messages.slice(0, -6));
-    const tail = messages
-      .slice(-6)
-      .map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+    const tail = messages.slice(-6).map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
     return [
       { role: "assistant" as const, content: `[Summary] ${summary}` },
       ...tail,

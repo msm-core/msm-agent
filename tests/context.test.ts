@@ -10,6 +10,7 @@ function makeState(overrides: Partial<RunState> = {}): RunState {
     totalCostUsd: 0,
     startTime: Date.now(),
     replanCount: 0,
+    toolCallCount: 0,
     recentSteps: [],
     ...overrides,
   };
