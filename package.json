@@ -1,0 +1,44 @@
+{
+  "name": "msm-agent",
+  "version": "0.1.0",
+  "description": "Portable agent framework for MSM brain — the hands that execute what the brain decides",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx src/demo.ts",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "msm",
+    "agent",
+    "ai",
+    "pipeline",
+    "small-models",
+    "multi-agent"
+  ],
+  "author": "Emad Jumaah",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emadjumaah/msm-agent"
+  },
+  "peerDependencies": {
+    "msm-ai": ">=3.0.0"
+  },
+  "devDependencies": {
+    "msm-ai": "^3.0.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "tsx": "^4.19.4"
+  }
+}
