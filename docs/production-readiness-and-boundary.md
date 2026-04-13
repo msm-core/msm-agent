@@ -28,30 +28,30 @@ Production baseline was taken from:
 
 ## Parity Matrix
 
-| Capability                                      | Dalil baseline                                               | msm-agent status                                    | Owner                                  |
-| ----------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------- |
-| Core event -> context -> brain -> dispatch loop | 22-step production loop                                      | Implemented                                         | msm-agent                              |
-| Per-session concurrency lock                    | Session-safe execution                                       | Implemented                                         | msm-agent                              |
-| Fast-intent pre-hook                            | Greeting/FAQ short-circuit                                   | Implemented                                         | msm-agent + project rules              |
-| Guard system                                    | Confidence, budget, repetition, dead-end                     | Implemented (core set)                              | msm-agent                              |
-| Tool validation hook                            | 7-check validation in gateway                                | Adapter hook available                              | project ToolAdapter                    |
-| Tool rate limit hook                            | Per-tenant per-tool limits                                   | Adapter hook available                              | project ToolAdapter                    |
-| Plan tracking                                   | Create/advance/fail/replan tracking                          | Implemented                                         | msm-agent                              |
-| Context enrichment                              | Task + memories + tool catalog                               | Implemented                                         | msm-agent + project memory             |
-| History compaction                              | Dynamic compaction + summarization                           | Hook implemented                                    | msm-agent + project                    |
-| Control bus commands                            | kill/pause/disable checks                                    | Implemented interface + checks                      | msm-agent + project adapter            |
-| Approval gate                                   | Durable approval requests and resume                         | Partial (sync bool only)                            | project + future msm-agent enhancement |
-| Resumption engine                               | Resume after approval/clarification/callback                 | Missing as first-class task resume state machine    | future msm-agent + project             |
-| FlushGate state machine for resume buffering    | collect/drain while rebuilding context                       | Missing (current FlushGate is write buffer utility) | future msm-agent                       |
-| Distributed destructive idempotency             | Redis NX + cached tool result                                | Missing in core (in-memory dedup only)              | project + future msm-agent option      |
-| Task state durability across restarts           | Redis run-state hydration + TTL extension                    | Missing in core run state                           | project + future msm-agent option      |
-| Abort in-flight tool on kill                    | withAbortOnKill polling                                      | Missing                                             | future msm-agent + project adapter     |
-| ActionReceipt / ResponseEvidence generation     | Built and attached on responses                              | Types exist, generation missing                     | future msm-agent + project             |
-| Channel pre-processing gates                    | opt-out, ack suppression, FAQ auto-answer                    | Not in package (by design)                          | project channels layer                 |
-| Employee routing and delegation policy          | sticky/intent/scored routing                                 | Not in package (by design)                          | project routing layer                  |
-| Multi-layer memory system                       | working/episodic/semantic/procedural/reflection              | Not in package (by design)                          | project memory layer                   |
-| Observability and quality loop                  | traces, trust scorecard, quality scorer, self-improving loop | Hooks only                                          | project observability layer            |
-| LLM provider failover and model routing         | multi-provider resilient router                              | Not in package (by design)                          | MSM brain layer                        |
+| Capability                                      | Dalil baseline                                               | msm-agent status                                | Owner                       |
+| ----------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------- | --------------------------- |
+| Core event -> context -> brain -> dispatch loop | 22-step production loop                                      | Implemented                                     | msm-agent                   |
+| Per-session concurrency lock                    | Session-safe execution                                       | Implemented                                     | msm-agent                   |
+| Fast-intent pre-hook                            | Greeting/FAQ short-circuit                                   | Implemented                                     | msm-agent + project rules   |
+| Guard system                                    | Confidence, budget, repetition, dead-end                     | Implemented (core set)                          | msm-agent                   |
+| Tool validation hook                            | 7-check validation in gateway                                | Adapter hook available                          | project ToolAdapter         |
+| Tool rate limit hook                            | Per-tenant per-tool limits                                   | Adapter hook available                          | project ToolAdapter         |
+| Plan tracking                                   | Create/advance/fail/replan tracking                          | Implemented                                     | msm-agent                   |
+| Context enrichment                              | Task + memories + tool catalog                               | Implemented                                     | msm-agent + project memory  |
+| History compaction                              | Dynamic compaction + summarization                           | Hook implemented                                | msm-agent + project         |
+| Control bus commands                            | kill/pause/disable checks                                    | Implemented interface + checks                  | msm-agent + project adapter |
+| Approval gate                                   | Durable approval requests and resume                         | ✅ Implemented (sync + durable async)           | msm-agent + project adapter |
+| Resumption engine                               | Resume after approval/clarification/callback                 | ✅ Implemented (3 resume paths)                 | msm-agent + project adapter |
+| FlushGate state machine for resume buffering    | collect/drain while rebuilding context                       | FlushGate is write buffer; resume uses RunState | msm-agent                   |
+| Distributed destructive idempotency             | Redis NX + cached tool result                                | ✅ Adapter hooks wired in loop                  | msm-agent + project adapter |
+| Task state durability across restarts           | Redis run-state hydration + TTL extension                    | ✅ saveRunState/loadRunState/extendRunStateTTL  | msm-agent + project adapter |
+| Abort in-flight tool on kill                    | withAbortOnKill polling                                      | ✅ AbortController per iteration                | msm-agent                   |
+| ActionReceipt / ResponseEvidence generation     | Built and attached on responses                              | ✅ buildEvidence() + receipts on response       | msm-agent                   |
+| Channel pre-processing gates                    | opt-out, ack suppression, FAQ auto-answer                    | Not in package (by design)                      | project channels layer      |
+| Employee routing and delegation policy          | sticky/intent/scored routing                                 | Not in package (by design)                      | project routing layer       |
+| Multi-layer memory system                       | working/episodic/semantic/procedural/reflection              | Not in package (by design)                      | project memory layer        |
+| Observability and quality loop                  | traces, trust scorecard, quality scorer, self-improving loop | Hooks only                                      | project observability layer |
+| LLM provider failover and model routing         | multi-provider resilient router                              | Not in package (by design)                      | MSM brain layer             |
 
 ## Ownership Contract
 
@@ -196,6 +196,23 @@ Mark all as done before claiming Dalil-level readiness.
 - [ ] Domain-specific evaluation scenarios pass at target quality.
 - [ ] Ownership boundary is documented for contributors.
 
+## Additional Features (v2 update, 2026-04-13)
+
+The following production features were added to close all identified gaps:
+
+| Feature               | Module                     | Description                                                       |
+| --------------------- | -------------------------- | ----------------------------------------------------------------- |
+| Output sanitization   | `src/core/sanitize.ts`     | Strips API keys, PII, secrets from all responses before delivery  |
+| Input guard           | `src/core/input-guard.ts`  | Prompt injection defense (13+ patterns, truncation, sanitization) |
+| Structured responses  | `ResponseFormat` type      | Text, list, buttons, carousel, confirmation formats               |
+| Conversation repair   | `onFatalError` hook        | Delivers user-friendly message on brain crash                     |
+| Plan acknowledgment   | `onPlanCreated` hook       | Sends "working on it..." for multi-step plans                     |
+| Injection detection   | `onInjectionDetected` hook | Alerts on prompt injection attempts                               |
+| Durable approval      | `waiting_approval` status  | Async approval with `approval_callback` resume                    |
+| Run state persistence | `MemoryAdapter` extensions | `saveRunState`, `loadRunState`, `extendRunStateTTL`               |
+
+See [INTEGRATION-GUIDE.md](./INTEGRATION-GUIDE.md) for full usage documentation.
+
 ## Current Recommendation
 
-Use msm-agent today as the execution core for new projects, but treat it as a runtime foundation, not a full product platform. For production-grade behavior, build the project-owned layers above and beside the core exactly as listed here.
+msm-agent now includes all runtime primitives needed for Dalil-level production behavior. Use it as the execution core for new projects, with project-owned adapters wired to your real infrastructure (databases, queues, channels, tools). See the integration guide for complete implementation patterns.

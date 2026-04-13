@@ -64,6 +64,21 @@ export interface CreateAgentOptions {
    * Called after every brain.run() to track cumulative cost per task.
    */
   costExtractor?: (payload: import("msm-ai").MSMPayload) => number;
+  /**
+   * Optional: called when a multi-step plan is created (>1 step).
+   * Use to send acknowledge messages ("Let me check for you...").
+   */
+  onPlanCreated?: LoopDeps["onPlanCreated"];
+  /**
+   * Optional: called on fatal error to produce a user-friendly recovery message.
+   * The repair message is delivered to the user before returning the error.
+   */
+  onFatalError?: LoopDeps["onFatalError"];
+  /**
+   * Optional: called when input injection is detected.
+   * Return a LoopOutcome to short-circuit, or null to continue with stripped input.
+   */
+  onInjectionDetected?: LoopDeps["onInjectionDetected"];
 }
 
 /**
@@ -114,6 +129,9 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     onGuard: options.onGuard,
     compactHistory: options.compactHistory,
     costExtractor: options.costExtractor,
+    onPlanCreated: options.onPlanCreated,
+    onFatalError: options.onFatalError,
+    onInjectionDetected: options.onInjectionDetected,
   };
 
   /** Execute an event with pre-hook and session mutex */

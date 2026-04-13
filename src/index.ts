@@ -25,6 +25,7 @@ export type {
   TaskStatus,
   ActionReceipt,
   ResponseEvidence,
+  ResponseFormat,
   ControlCommand,
 } from "./core/types.js";
 export { DEFAULT_CONFIG } from "./core/types.js";
@@ -59,7 +60,13 @@ export type { FlushGateOptions } from "./core/flush-gate.js";
 // ─── Context Builder ─────────────────────────────────────────
 export { buildContext } from "./core/context.js";
 export type { BrainInput, ContextOptions } from "./core/context.js";
+// ─── Output Sanitization ─────────────────────────────────
+export { sanitizeOutput, containsSensitiveData } from "./core/sanitize.js";
+export type { SanitizeResult } from "./core/sanitize.js";
 
+// ─── Input Guard (Prompt Injection Defense) ──────────────
+export { guardInput } from "./core/input-guard.js";
+export type { InputGuardResult } from "./core/input-guard.js";
 // ─── Adapter Interfaces ─────────────────────────────────────
 export type { MemoryAdapter, MemoryEntry } from "./adapters/memory.js";
 export type {

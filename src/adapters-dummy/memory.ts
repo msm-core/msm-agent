@@ -7,6 +7,7 @@ import type {
   TaskState,
   TaskPlan,
   StepResult,
+  RunState,
 } from "../core/types.js";
 import type { MemoryAdapter, MemoryEntry } from "../adapters/memory.js";
 
@@ -14,6 +15,7 @@ export class InMemoryAdapter implements MemoryAdapter {
   private conversations = new Map<string, Message[]>();
   private tasks = new Map<string, TaskState>();
   private memories: MemoryEntry[] = [];
+  private runStates = new Map<string, RunState>();
 
   async getConversation(sessionId: string): Promise<Message[]> {
     return this.conversations.get(sessionId) ?? [];
@@ -70,12 +72,14 @@ export class InMemoryAdapter implements MemoryAdapter {
 
   /**
    * Find an active (resumable) task for a session.
-   * Returns the most recent task in waiting_tool, waiting_clarification, or running state.
+   * Returns the most recent task in waiting_tool, waiting_clarification,
+   * waiting_approval, or running state.
    */
   async getActiveTask(sessionId: string): Promise<TaskState | null> {
     const resumableStatuses = new Set([
       "waiting_tool",
       "waiting_clarification",
+      "waiting_approval",
       "running",
     ]);
     let best: TaskState | null = null;
@@ -89,6 +93,19 @@ export class InMemoryAdapter implements MemoryAdapter {
     return best;
   }
 
+  // ─── Durable Run State ─────────────────────────────────
+  async saveRunState(taskId: string, state: RunState): Promise<void> {
+    this.runStates.set(taskId, { ...state });
+  }
+
+  async loadRunState(taskId: string): Promise<RunState | null> {
+    return this.runStates.get(taskId) ?? null;
+  }
+
+  async extendRunStateTTL(_taskId: string): Promise<void> {
+    // No-op for in-memory (no TTL concept)
+  }
+
   /** Test helper: get all tasks */
   getAllTasks(): TaskState[] {
     return [...this.tasks.values()];
@@ -99,5 +116,6 @@ export class InMemoryAdapter implements MemoryAdapter {
     this.conversations.clear();
     this.tasks.clear();
     this.memories = [];
+    this.runStates.clear();
   }
 }

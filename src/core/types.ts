@@ -60,6 +60,13 @@ export type AgentEvent =
       taskId: string;
       result: ToolResult;
     }
+  | {
+      type: "approval_callback";
+      sessionId: string;
+      taskId: string;
+      approved: boolean;
+      decidedBy?: string;
+    }
   | { type: "webhook"; sessionId: string; source: string; payload: unknown }
   | { type: "cron"; taskType: string; payload?: unknown };
 
@@ -78,6 +85,7 @@ export type TaskStatus =
   | "running"
   | "waiting_tool"
   | "waiting_clarification"
+  | "waiting_approval"
   | "completed"
   | "failed"
   | "escalated"
@@ -163,6 +171,22 @@ export type GuardSignal =
   | { type: "rate_limited"; toolName: string; retryAfterMs: number }
   | { type: "aborted"; taskId: string; reason: string };
 
+// ─── Response Format ──────────────────────────────────────────
+
+/** Structured response format for rich channel delivery (buttons, lists, carousels) */
+export interface ResponseFormat {
+  type: "text" | "list" | "buttons" | "carousel" | "confirmation";
+  items?: Array<{
+    id: string;
+    title: string;
+    titleAr?: string;
+    subtitle?: string;
+    image?: string;
+  }>;
+  fields?: Array<{ label: string; value: string }>;
+  actions?: string[];
+}
+
 // ─── Loop Result ─────────────────────────────────────────────
 
 export type LoopOutcome =
@@ -176,6 +200,8 @@ export type LoopOutcome =
       evidence?: ResponseEvidence[];
       /** Customer-visible receipts for destructive operations */
       receipts?: ActionReceipt[];
+      /** Structured response format for rich channel rendering */
+      responseFormat?: ResponseFormat;
     }
   | { type: "escalated"; reason: string; payload: MSMPayload }
   | {
@@ -185,6 +211,14 @@ export type LoopOutcome =
       payload: MSMPayload;
       /** Task ID to resume when clarification is answered */
       taskId?: string;
+    }
+  | {
+      type: "waiting_approval";
+      taskId: string;
+      toolName: string;
+      toolParams: Record<string, unknown>;
+      reasoning: string;
+      payload: MSMPayload;
     }
   | { type: "delegated"; targetRole: string; payload: MSMPayload }
   | { type: "error"; error: string; payload?: MSMPayload }

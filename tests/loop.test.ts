@@ -396,8 +396,10 @@ describe("execution loop", () => {
 
       expect(delivery.requestApproval).toHaveBeenCalledWith(
         "s1",
+        expect.stringMatching(/^task-/),
         "delete_account",
         { id: "123" },
+        expect.any(String),
       );
       expect(outcome.type).toBe("response");
     });

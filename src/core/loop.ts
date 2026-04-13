@@ -3,17 +3,24 @@
  *
  * dalil's 22-step loop simplified to the universal pattern:
  *
- *   event → context → brain → guard → dispatch:
- *     terminal (respond/escalate/clarify/delegate) → deliver → done
- *     use_tool → validate → execute → record → plan advance → loop
+ *   event → input guard → context → brain → guard → dispatch:
+ *     terminal (respond/escalate/clarify/delegate) → sanitize → deliver → done
+ *     use_tool → validate → dedup → execute → record → plan advance → loop
+ *     approval needed → pause task → notify → done (resume via approval_callback)
  *
  * Production features:
- *   - Task resumption: tool_callback/user_message resume existing tasks
- *   - AbortSignal: kill-task can interrupt in-flight tool calls
+ *   - Task resumption: tool_callback/user_message/approval_callback resume existing tasks
+ *   - Durable approval: async approval flow with waiting_approval status
+ *   - AbortSignal: kill-task can interrupt in-flight tool calls (polled during execution)
  *   - Distributed dedup: ToolAdapter.checkIdempotency() for cross-worker safety
  *   - Cost tracking: costExtractor hook for brain-reported LLM costs
  *   - Evidence chain: ResponseEvidence + ActionReceipt on terminal outcomes
- *   - Brain error handling: try/catch with failTask lifecycle
+ *   - Output sanitization: strips secrets/PII before delivery
+ *   - Input guard: prompt injection defense
+ *   - Conversation repair: user-friendly error message on fatal failures
+ *   - Plan acknowledgment: onPlanCreated hook for multi-step plan notifications
+ *   - Run state durability: optional persist/load via MemoryAdapter
+ *   - Structured response format: pass-through for rich channel rendering
  *   - Tool call budget: maxToolCallsPerTask guard
  */
 
@@ -29,6 +36,7 @@ import type {
   AgentEvent,
   ResponseEvidence,
   ActionReceipt,
+  ResponseFormat,
 } from "./types.js";
 import type { MemoryAdapter } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
@@ -44,6 +52,8 @@ import {
   clearPlan,
 } from "./planner.js";
 import { checkDedup } from "./tool-dedup.js";
+import { sanitizeOutput } from "./sanitize.js";
+import { guardInput } from "./input-guard.js";
 
 export interface LoopDeps {
   brain: Brain;
@@ -69,6 +79,30 @@ export interface LoopDeps {
    * If not provided, cost tracking remains at 0.
    */
   costExtractor?: (payload: MSMPayload) => number;
+  /**
+   * Optional: called when a multi-step plan is created.
+   * Use to send acknowledge messages ("Let me check for you...").
+   * Not called for single-step plans (dalil pattern: suppress ack for trivials).
+   */
+  onPlanCreated?: (
+    sessionId: string,
+    plan: import("./types.js").TaskPlan,
+  ) => Promise<void>;
+  /**
+   * Optional: called on fatal error to produce a user-friendly recovery message.
+   * If provided, the repair message is delivered to the user before returning the error.
+   * dalil pattern: repairConversation() sends "Sorry, something went wrong..."
+   */
+  onFatalError?: (sessionId: string, error: string) => Promise<string>;
+  /**
+   * Optional: called when input injection is detected.
+   * Use for logging/alerting. The input is still processed (stripped) unless
+   * the hook returns a LoopOutcome to short-circuit.
+   */
+  onInjectionDetected?: (
+    sessionId: string,
+    patterns: string[],
+  ) => Promise<LoopOutcome | null | undefined>;
 }
 
 /**
@@ -85,19 +119,34 @@ export async function executeEvent(
   const sessionId =
     sessionIdOverride ??
     ("sessionId" in event ? event.sessionId : `cron-${Date.now()}`);
-  const text =
-    event.type === "user_message"
-      ? event.text
-      : event.type === "tool_callback"
-        ? `Tool result received for task ${event.taskId}`
-        : event.type === "webhook"
-          ? `Webhook from ${event.source}`
-          : `Scheduled task: ${event.taskType}`;
+
+  // ─── Input Guard: Prompt Injection Defense ───────────────
+  let text: string;
+  if (event.type === "user_message") {
+    const guardResult = guardInput(event.text);
+    text = guardResult.text;
+    if (guardResult.injectionDetected && deps.onInjectionDetected) {
+      const shortCircuit = await deps.onInjectionDetected(
+        sessionId,
+        guardResult.matchedPatterns,
+      );
+      if (shortCircuit) return shortCircuit;
+    }
+  } else if (event.type === "tool_callback") {
+    text = `Tool result received for task ${event.taskId}`;
+  } else if (event.type === "approval_callback") {
+    text = `Approval ${event.approved ? "granted" : "denied"} for task ${event.taskId}`;
+  } else if (event.type === "webhook") {
+    text = `Webhook from ${event.source}`;
+  } else {
+    text = `Scheduled task: ${event.taskType}`;
+  }
   const modality =
     event.type === "user_message" ? event.modality : ("text" as const);
 
   // ─── Task Resumption ─────────────────────────────────────
   // For tool_callback: resume the referenced task
+  // For approval_callback: resume the referenced task
   // For user_message: check for an active waiting task to resume
   // Otherwise: create a new task
   let task: TaskState;
@@ -117,6 +166,29 @@ export async function executeEvent(
       // Stale callback — create fresh task
       task = createNewTask(sessionId);
       await deps.memory.saveTask(task);
+    }
+  } else if (event.type === "approval_callback") {
+    const existing = await deps.memory.getTask(event.taskId);
+    if (existing && existing.status === "waiting_approval") {
+      if (!event.approved) {
+        // Approval denied — fail the tool, let brain replan
+        task = existing;
+        task.status = "running";
+        await deps.memory.updateTaskStatus(task.taskId, "running");
+        resumed = true;
+        // Inject denial as a tool result so brain knows
+      } else {
+        task = existing;
+        task.status = "running";
+        await deps.memory.updateTaskStatus(task.taskId, "running");
+        resumed = true;
+      }
+    } else {
+      // Stale approval — ignore
+      return {
+        type: "error",
+        error: `No waiting_approval task found for ${event.taskId}`,
+      };
     }
   } else if (event.type === "user_message" && deps.memory.getActiveTask) {
     const active = await deps.memory.getActiveTask(sessionId);
@@ -144,17 +216,31 @@ export async function executeEvent(
   });
 
   // Initialize run state (carry forward tool call count if resumed)
+  // Try to load durable run state if available (dalil: Redis with TTL)
   const priorToolCalls = resumed
     ? task.steps.filter((s) => s.toolResult !== null).length
     : 0;
-  const state: RunState = {
-    iteration: 0,
-    totalCostUsd: resumed ? task.totalCostUsd : 0,
-    startTime: Date.now(),
-    replanCount: resumed ? (task.plan?.replanCount ?? 0) : 0,
-    toolCallCount: priorToolCalls,
-    recentSteps: resumed ? task.steps.slice(-10) : [],
-  };
+  let state: RunState;
+  if (resumed && deps.memory.loadRunState) {
+    const savedState = await deps.memory.loadRunState(taskId);
+    state = savedState ?? {
+      iteration: 0,
+      totalCostUsd: resumed ? task.totalCostUsd : 0,
+      startTime: Date.now(),
+      replanCount: resumed ? (task.plan?.replanCount ?? 0) : 0,
+      toolCallCount: priorToolCalls,
+      recentSteps: resumed ? task.steps.slice(-10) : [],
+    };
+  } else {
+    state = {
+      iteration: 0,
+      totalCostUsd: resumed ? task.totalCostUsd : 0,
+      startTime: Date.now(),
+      replanCount: resumed ? (task.plan?.replanCount ?? 0) : 0,
+      toolCallCount: priorToolCalls,
+      recentSteps: resumed ? task.steps.slice(-10) : [],
+    };
+  }
 
   let lastToolResult: ToolResult | undefined;
   let lastPayload: MSMPayload | undefined;
@@ -162,6 +248,26 @@ export async function executeEvent(
   // For tool_callback, seed the last tool result from the event
   if (event.type === "tool_callback") {
     lastToolResult = event.result;
+  }
+
+  // For approval_callback with denial, seed a synthetic failed tool result
+  if (event.type === "approval_callback" && !event.approved) {
+    let lastToolStep: StepResult | undefined;
+    for (let i = task.steps.length - 1; i >= 0; i--) {
+      if (task.steps[i].toolName) {
+        lastToolStep = task.steps[i];
+        break;
+      }
+    }
+    if (lastToolStep) {
+      lastToolResult = {
+        tool: lastToolStep.toolName!,
+        status: "failed",
+        result: {
+          reason: `Approval denied${event.decidedBy ? ` by ${event.decidedBy}` : ""}`,
+        },
+      };
+    }
   }
 
   // AbortController for in-flight tool calls
@@ -224,6 +330,20 @@ export async function executeEvent(
       // Brain call failed — failTask lifecycle instead of unhandled crash
       const error = err instanceof Error ? err.message : String(err);
       await finishTask(task, "failed", deps, error);
+      // Conversation repair: send user-friendly error message (dalil: repairConversation)
+      if (deps.onFatalError) {
+        try {
+          const repairMsg = await deps.onFatalError(sessionId, error);
+          await deps.delivery.send(sessionId, {
+            type: "response",
+            text: repairMsg,
+            language: "en",
+            payload: {} as MSMPayload,
+          });
+        } catch {
+          // repair itself failed — don't crash
+        }
+      }
       return {
         type: "error",
         error: `Brain call failed: ${error}`,
@@ -265,6 +385,15 @@ export async function executeEvent(
     if (orch.plan && orch.plan.length > 0 && !task.plan) {
       task.plan = createPlan(orch.plan, reasoning);
       await deps.memory.updatePlan(taskId, task.plan);
+      // Acknowledge multi-step plans (dalil: suppress for single-step)
+      if (task.plan.steps.length > 1 && deps.onPlanCreated) {
+        await deps.onPlanCreated(sessionId, task.plan);
+      }
+    }
+
+    // Persist run state for durability (dalil: Redis TTL extension)
+    if (deps.memory.saveRunState) {
+      await deps.memory.saveRunState(taskId, state);
     }
 
     // ─── Guard Check ─────────────────────────────────────
@@ -297,29 +426,32 @@ export async function executeEvent(
       }
 
       // Budget/iteration limit → force respond with whatever we have
-      const responseText =
+      const rawText =
         payload.final_output?.text ??
         payload.generation?.response_text ??
         "I was unable to complete this task within the allowed limits.";
+      const sanitized = sanitizeOutput(rawText);
       const { evidence, receipts } = buildEvidence(task.steps);
       await finishTask(task, "completed", deps);
       return {
         type: "response",
-        text: responseText,
+        text: sanitized.text,
         textAr: payload.generation?.response_text_ar,
         language: payload.final_output?.language ?? "en",
         payload,
         evidence: evidence.length > 0 ? evidence : undefined,
         receipts: receipts.length > 0 ? receipts : undefined,
+        responseFormat: extractResponseFormat(payload),
       };
     }
 
     // ─── Terminal Actions ─────────────────────────────────
     if (action === STANDARD_ACTIONS.RESPOND || action === "complete") {
-      const responseText =
+      const rawText =
         payload.final_output?.text ??
         payload.generation?.response_text ??
         "Done.";
+      const sanitized = sanitizeOutput(rawText);
 
       // Record step
       const step = recordStep(
@@ -337,7 +469,7 @@ export async function executeEvent(
       // Record assistant message
       await deps.memory.addMessage(sessionId, {
         role: "assistant",
-        content: responseText,
+        content: sanitized.text,
         timestamp: new Date().toISOString(),
       });
 
@@ -345,12 +477,13 @@ export async function executeEvent(
       await finishTask(task, "completed", deps);
       return {
         type: "response",
-        text: responseText,
+        text: sanitized.text,
         textAr: payload.generation?.response_text_ar,
         language: payload.final_output?.language ?? "en",
         payload,
         evidence: evidence.length > 0 ? evidence : undefined,
         receipts: receipts.length > 0 ? receipts : undefined,
+        responseFormat: extractResponseFormat(payload),
       };
     }
 
@@ -566,14 +699,32 @@ export async function executeEvent(
         }
       }
 
-      // Check approval if needed
+      // Check approval if needed (two modes: sync boolean or async "pending")
       if (toolDef?.requiresApproval && deps.delivery.requestApproval) {
-        const approved = await deps.delivery.requestApproval(
+        const approvalResult = await deps.delivery.requestApproval(
           sessionId,
+          taskId,
           toolName,
           toolParams ?? {},
+          reasoning,
         );
-        if (!approved) {
+        if (approvalResult === "pending") {
+          // Durable approval: pause task and wait for approval_callback event
+          // Save run state so we can resume after approval decision
+          if (deps.memory.saveRunState) {
+            await deps.memory.saveRunState(taskId, state);
+          }
+          await finishTask(task, "waiting_approval", deps);
+          return {
+            type: "waiting_approval",
+            taskId,
+            toolName,
+            toolParams: toolParams ?? {},
+            reasoning,
+            payload,
+          };
+        }
+        if (!approvalResult) {
           const step = recordStep(
             state,
             action,
@@ -593,6 +744,11 @@ export async function executeEvent(
           lastToolResult = step.toolResult!;
           continue;
         }
+      }
+
+      // Extend run state TTL before potentially long tool execution (dalil pattern)
+      if (deps.memory.extendRunStateTTL) {
+        await deps.memory.extendRunStateTTL(taskId);
       }
 
       // Execute the tool with AbortSignal
@@ -695,19 +851,21 @@ export async function executeEvent(
   }
 
   // Loop exhausted without terminal action
-  const fallbackText =
+  const rawFallback =
     lastPayload?.final_output?.text ??
     lastPayload?.generation?.response_text ??
     "I was unable to complete this task.";
+  const sanitizedFallback = sanitizeOutput(rawFallback);
   const { evidence, receipts } = buildEvidence(task.steps);
   await finishTask(task, "completed", deps);
   return {
     type: "response",
-    text: fallbackText,
+    text: sanitizedFallback.text,
     language: lastPayload?.final_output?.language ?? "en",
     payload: lastPayload!,
     evidence: evidence.length > 0 ? evidence : undefined,
     receipts: receipts.length > 0 ? receipts : undefined,
+    responseFormat: extractResponseFormat(lastPayload),
   };
 }
 
@@ -806,4 +964,31 @@ async function finishTask(
     task.error = error;
   }
   await deps.memory.updateTaskStatus(task.taskId, status);
+}
+
+/**
+ * Extract structured response format from brain payload.
+ * The brain may include response_format in generation output for rich rendering.
+ */
+function extractResponseFormat(
+  payload: MSMPayload | undefined,
+): ResponseFormat | undefined {
+  if (!payload?.generation) return undefined;
+  const gen = payload.generation as unknown as Record<string, unknown>;
+  if (!gen) return undefined;
+  const fmt = gen.response_format as Record<string, unknown> | undefined;
+  if (!fmt || typeof fmt !== "object") return undefined;
+  const fmtType = fmt.type as string | undefined;
+  if (
+    !fmtType ||
+    !["text", "list", "buttons", "carousel", "confirmation"].includes(fmtType)
+  ) {
+    return undefined;
+  }
+  return {
+    type: fmtType as ResponseFormat["type"],
+    items: (fmt.items as ResponseFormat["items"]) ?? undefined,
+    fields: (fmt.fields as ResponseFormat["fields"]) ?? undefined,
+    actions: (fmt.actions as string[]) ?? undefined,
+  };
 }

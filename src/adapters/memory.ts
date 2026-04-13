@@ -10,6 +10,7 @@ import type {
   TaskState,
   TaskPlan,
   StepResult,
+  RunState,
 } from "../core/types.js";
 
 export interface MemoryAdapter {
@@ -23,13 +24,26 @@ export interface MemoryAdapter {
   updatePlan(taskId: string, plan: TaskPlan): Promise<void>;
   addStep(taskId: string, step: StepResult): Promise<void>;
   updateTaskStatus(taskId: string, status: TaskState["status"]): Promise<void>;
+
   // ─── Optional: Task Resumption ───────────────────────────────
   /**
    * Find the most recent active (resumable) task for a session.
-   * Returns a task in waiting_tool, waiting_clarification, or running state.
+   * Returns a task in waiting_tool, waiting_clarification, waiting_approval, or running state.
    * Required for first-class approval/callback resumption workflows.
    */
   getActiveTask?(sessionId: string): Promise<TaskState | null>;
+
+  // ─── Optional: Durable Run State ───────────────────────────
+  /**
+   * Save ephemeral run state for durability across restarts (dalil: Redis with TTL).
+   * If not implemented, run state is in-memory only (lost on restart).
+   */
+  saveRunState?(taskId: string, state: RunState): Promise<void>;
+  /** Load run state for a resumed task */
+  loadRunState?(taskId: string): Promise<RunState | null>;
+  /** Extend TTL on run state during long operations (dalil: extendTTL) */
+  extendRunStateTTL?(taskId: string): Promise<void>;
+
   // ─── Optional: Semantic/Episodic Memory ────────────────────
   /** Search memory by natural language query (for context enrichment) */
   search?(query: string, limit: number): Promise<MemoryEntry[]>;
