@@ -346,13 +346,13 @@ If the loop exhausts `maxIterations` without a terminal action, the runtime forc
 
 The runtime provides the loop. You provide 5 adapters that connect it to your infrastructure.
 
-| Adapter           | Purpose                                              | Built-in options                         |
-| ----------------- | ---------------------------------------------------- | ---------------------------------------- |
-| `MemoryAdapter`   | Conversation history, task state, semantic search    | `InMemoryAdapter`, `SQLiteMemoryAdapter`, `PostgresMemoryAdapter`, `MongoMemoryAdapter`, `Neo4jMemoryAdapter` |
-| `ToolAdapter`     | Execute domain actions; mark tools `requiresApproval` to pause for human sign-off | Your implementation or `EquipmentToolAdapter`, `SkillsToolAdapter` |
-| `EventAdapter`    | Receive work from webhooks, queues, or manual calls  | `BullMQEventAdapter` (durable), simple HTTP handler |
-| `DeliveryAdapter` | Send responses to the user's channel                 | `WhatsAppDeliveryAdapter`, your implementation |
-| `ControlBusAdapter` | Kill tasks, pause tenants, disable tools at runtime | `RedisControlBus` (production), `InMemoryControlBus` (dev) |
+| Adapter             | Purpose                                                                           | Built-in options                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `MemoryAdapter`     | Conversation history, task state, semantic search                                 | `InMemoryAdapter`, `SQLiteMemoryAdapter`, `PostgresMemoryAdapter`, `MongoMemoryAdapter`, `Neo4jMemoryAdapter` |
+| `ToolAdapter`       | Execute domain actions; mark tools `requiresApproval` to pause for human sign-off | Your implementation or `EquipmentToolAdapter`, `SkillsToolAdapter`                                            |
+| `EventAdapter`      | Receive work from webhooks, queues, or manual calls                               | `BullMQEventAdapter` (durable), simple HTTP handler                                                           |
+| `DeliveryAdapter`   | Send responses to the user's channel                                              | `WhatsAppDeliveryAdapter`, your implementation                                                                |
+| `ControlBusAdapter` | Kill tasks, pause tenants, disable tools at runtime                               | `RedisControlBus` (production), `InMemoryControlBus` (dev)                                                    |
 
 Each adapter has a dummy implementation for tests (`DummyMemoryAdapter`, etc.) — no external services required.
 
@@ -387,16 +387,16 @@ For the [msm-ai](https://github.com/msm-core/msm-ai) 5-layer prompt pipeline, wr
 
 The CLI selects adapters automatically from environment variables. For embedded use, import them directly from `"msm-agent"`.
 
-| Adapter                 | Activate via                    | Peer dep                | Best for                         |
-| ----------------------- | ------------------------------- | ----------------------- | -------------------------------- |
-| `InMemoryAdapter`       | default                         | none                    | Tests, prototypes                |
-| `SQLiteMemoryAdapter`   | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)      | Dev, single-container            |
-| `PostgresMemoryAdapter` | `DATABASE_URL=postgresql://...` | `pnpm add postgres`     | Production, SQL workloads        |
-| `MongoMemoryAdapter`    | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`      | Production, Atlas Vector Search  |
-| `Neo4jMemoryAdapter`    | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver` | Graph-enriched semantic search   |
-| `RedisControlBus`       | `REDIS_URL=redis://...`         | `pnpm add ioredis`      | Multi-instance control bus       |
-| `BullMQEventAdapter`    | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries   |
-| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`    | none                    | Kader WhatsApp Gateway bridge    |
+| Adapter                   | Activate via                    | Peer dep                  | Best for                        |
+| ------------------------- | ------------------------------- | ------------------------- | ------------------------------- |
+| `InMemoryAdapter`         | default                         | none                      | Tests, prototypes               |
+| `SQLiteMemoryAdapter`     | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)        | Dev, single-container           |
+| `PostgresMemoryAdapter`   | `DATABASE_URL=postgresql://...` | `pnpm add postgres`       | Production, SQL workloads       |
+| `MongoMemoryAdapter`      | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`        | Production, Atlas Vector Search |
+| `Neo4jMemoryAdapter`      | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver`   | Graph-enriched semantic search  |
+| `RedisControlBus`         | `REDIS_URL=redis://...`         | `pnpm add ioredis`        | Multi-instance control bus      |
+| `BullMQEventAdapter`      | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries    |
+| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`      | none                      | Kader WhatsApp Gateway bridge   |
 
 Neo4j wraps any primary adapter as a graph enrichment layer. Failed BullMQ jobs retry 3× with exponential back-off.
 
@@ -923,17 +923,17 @@ AGENT_FILE=./agent.md DATABASE_URL=postgresql://... REDIS_URL=redis://... node d
 
 ## 18. HTTP API Reference
 
-| Endpoint            | Method | Description                                    |
-| ------------------- | ------ | ---------------------------------------------- |
-| `/health`           | GET    | Agent identity and readiness                   |
-| `/v1/event`         | POST   | Process any `AgentEvent` (stateful sessions)   |
-| `/chat`             | POST   | Stateless single-turn (demo / testing)         |
-| `/session/:id`      | GET    | Conversation history + active task             |
-| `/task/approve`     | POST   | Resume a paused approval task                  |
-| `/webhook/whatsapp` | POST   | Inbound WhatsApp (HMAC-SHA256 verified)        |
-| `/jobs/*`           | —      | Jobs CRUD (`ENABLE_JOBS=true`)                 |
-| `/admin/*`          | —      | Control bus + memory search (password-gated)   |
-| `/dashboard`        | GET    | Ops panel UI (`DASHBOARD_PASSWORD` required)   |
+| Endpoint            | Method | Description                                  |
+| ------------------- | ------ | -------------------------------------------- |
+| `/health`           | GET    | Agent identity and readiness                 |
+| `/v1/event`         | POST   | Process any `AgentEvent` (stateful sessions) |
+| `/chat`             | POST   | Stateless single-turn (demo / testing)       |
+| `/session/:id`      | GET    | Conversation history + active task           |
+| `/task/approve`     | POST   | Resume a paused approval task                |
+| `/webhook/whatsapp` | POST   | Inbound WhatsApp (HMAC-SHA256 verified)      |
+| `/jobs/*`           | —      | Jobs CRUD (`ENABLE_JOBS=true`)               |
+| `/admin/*`          | —      | Control bus + memory search (password-gated) |
+| `/dashboard`        | GET    | Ops panel UI (`DASHBOARD_PASSWORD` required) |
 
 → **Full request/response examples in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#2-http-api-reference)**
 
@@ -1005,4 +1005,3 @@ MIT
 - [Integration Guide](docs/INTEGRATION-GUIDE.md) — adapter specs, brain wiring, production setup, full example
 - [Deployment Reference](docs/DEPLOYMENT.md) — CLI, Docker, HTTP API, config options, guard reference
 - [Production Readiness & Ownership Boundary](docs/production-readiness-and-boundary.md) — parity matrix, what to build yourself
-

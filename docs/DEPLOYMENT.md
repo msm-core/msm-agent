@@ -234,34 +234,39 @@ Full `createAgent()` options:
 ```typescript
 const agent = createAgent({
   // Required
-  brain,    // Brain — any object with brain.run(input)
-  memory,   // MemoryAdapter
-  tools,    // ToolAdapter
-  events,   // EventAdapter
+  brain, // Brain — any object with brain.run(input)
+  memory, // MemoryAdapter
+  tools, // ToolAdapter
+  events, // EventAdapter
   delivery, // DeliveryAdapter
 
   // Loop configuration
   config: {
-    maxIterations: 6,        // Max loop iterations per event (default: 6)
-    maxReplans: 2,           // Max plan retries before freestyle (default: 2)
+    maxIterations: 6, // Max loop iterations per event (default: 6)
+    maxReplans: 2, // Max plan retries before freestyle (default: 2)
     confidenceThreshold: 0.6, // Tool calls below this → clarification (default: 0.6)
-    costCapPerTask: 0.5,     // USD limit per task, 0 = unlimited (default: 0)
-    timeoutMs: 30_000,       // Wall-clock timeout, 0 = unlimited (default: 0)
-    toolDedup: true,         // Deduplicate identical tool calls (default: true)
+    costCapPerTask: 0.5, // USD limit per task, 0 = unlimited (default: 0)
+    timeoutMs: 30_000, // Wall-clock timeout, 0 = unlimited (default: 0)
+    toolDedup: true, // Deduplicate identical tool calls (default: true)
     maxToolCallsPerTask: 10, // Max tool calls per task, 0 = unlimited (default: 0)
   },
 
   // Optional
-  controlBus,    // ControlBusAdapter — for kill/pause/disable at runtime
-  evolving,      // EvolvingAdapter — NoneEvolvingAdapter (default) or MemoryEvolvingAdapter
-  gates,         // GatesConfig — pre-processing gates (acknowledgement, business hours)
-  tenantId,      // string — used in control bus checks
+  controlBus, // ControlBusAdapter — for kill/pause/disable at runtime
+  evolving, // EvolvingAdapter — NoneEvolvingAdapter (default) or MemoryEvolvingAdapter
+  gates, // GatesConfig — pre-processing gates (acknowledgement, business hours)
+  tenantId, // string — used in control bus checks
   equipmentBlock, // string — rendered equipment context block (from renderEquipmentBlock())
 
   // Fast-intent gate — return an outcome directly, skip the brain loop
   preHook: async (event) => {
     if (/^(hi|hello|hey)$/i.test(event.text)) {
-      return { type: "response", text: "Hello! How can I help?", language: "en", payload: {} };
+      return {
+        type: "response",
+        text: "Hello! How can I help?",
+        language: "en",
+        payload: {},
+      };
     }
     return null; // null → proceed to brain loop
   },
@@ -276,15 +281,22 @@ const agent = createAgent({
   },
 
   // Observability
-  onIteration: (state, step) => { metrics.record(step); },
-  onGuard: (signal) => { logger.warn("Guard fired", signal); },
+  onIteration: (state, step) => {
+    metrics.record(step);
+  },
+  onGuard: (signal) => {
+    logger.warn("Guard fired", signal);
+  },
 
   // Cost tracking — extract USD cost from each brain response
   costExtractor: (payload) => payload.trace?.totalCostUsd ?? 0,
 
   // Hooks
-  onPlanCreated: async (sessionId, plan) => { /* notify user plan is ready */ },
-  onFatalError: async (sessionId, error) => "I apologize, something went wrong.",
+  onPlanCreated: async (sessionId, plan) => {
+    /* notify user plan is ready */
+  },
+  onFatalError: async (sessionId, error) =>
+    "I apologize, something went wrong.",
   onInjectionDetected: async (sessionId, patterns) => null, // null = continue
 });
 ```
