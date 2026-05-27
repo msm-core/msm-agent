@@ -407,7 +407,7 @@ export async function executeEvent(
     // If brain returned a plan on first call, track it
     if (orch.plan && orch.plan.length > 0 && !task.plan) {
       task.plan = createPlan(orch.plan, reasoning);
-      await deps.memory.updatePlan(taskId, task.plan);
+      await deps.memory.saveTask(task);
       // Acknowledge multi-step plans (suppress for single-step)
       if (task.plan.steps.length > 1 && deps.onPlanCreated) {
         await deps.onPlanCreated(sessionId, task.plan);
@@ -829,25 +829,23 @@ export async function executeEvent(
         reasoning,
         latencyMs + toolLatency,
       );
-      await deps.memory.addStep(taskId, step);
-      deps.onIteration?.(state, step);
-      state.toolCallCount++;
-
-      // Plan management
+      // Thread task through loop — push step to in-memory task and save once
+      // instead of letting addStep() do a redundant getTask() round-trip.
+      task.steps.push(step);
+      // Plan management (mutate task.plan in-memory first, then persist together)
       if (toolResult.status === "ok" && task.plan) {
         task.plan = advancePlanStep(task.plan);
-        await deps.memory.updatePlan(taskId, task.plan);
       } else if (toolResult.status === "failed" && task.plan) {
         task.plan = failPlanStep(task.plan);
         if (canReplan(task.plan, deps.config.maxReplans)) {
-          // Brain will replan on next iteration with failure context
           task.plan = { ...task.plan, replanCount: task.plan.replanCount + 1 };
         } else {
-          // Freestyle — clear plan, let brain figure it out
           task.plan = clearPlan();
         }
-        await deps.memory.updatePlan(taskId, task.plan!);
       }
+      await deps.memory.saveTask(task);
+      deps.onIteration?.(state, step);
+      state.toolCallCount++;
 
       lastToolResult = toolResult;
       state.iteration++;
@@ -984,7 +982,9 @@ async function finishTask(
   if (error) {
     task.error = error;
   }
-  await deps.memory.updateTaskStatus(task.taskId, status);
+  // Save the full in-memory task directly — no need for updateTaskStatus()
+  // to do an extra getTask() read-modify-write cycle.
+  await deps.memory.saveTask(task);
 }
 
 /**

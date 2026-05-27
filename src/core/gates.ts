@@ -17,6 +17,7 @@
  */
 
 import type { LoopOutcome, BrainPayload } from "./types.js";
+import { STANDARD_ACTIONS } from "./types.js";
 
 // ─── Acknowledgement Gate ─────────────────────────────────────
 
@@ -195,7 +196,7 @@ export function checkGates(
     const closedText =
       config.businessHours.closedMessage ?? DEFAULT_CLOSED_MESSAGE;
     const stubPayload: BrainPayload = {
-      orchestration: { action: "respond", confidence: 1 },
+      orchestration: { action: STANDARD_ACTIONS.RESPOND, confidence: 1 },
       generation: { response_text: closedText },
     };
     return {

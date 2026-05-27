@@ -90,12 +90,14 @@ export class SQLiteMemoryAdapter implements MemoryAdapter {
 
   // ─── Conversation ──────────────────────────────────────────
 
-  async getConversation(sessionId: string): Promise<Message[]> {
-    const rows = this.db
-      .prepare(
-        "SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY created_at ASC",
-      )
-      .all(sessionId) as unknown as MessageRow[];
+  async getConversation(sessionId: string, limit?: number): Promise<Message[]> {
+    const sql =
+      limit !== undefined
+        ? "SELECT role, content, timestamp FROM (SELECT role, content, timestamp, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+        : "SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY created_at ASC";
+    const rows = (limit !== undefined
+      ? this.db.prepare(sql).all(sessionId, limit)
+      : this.db.prepare(sql).all(sessionId)) as unknown as MessageRow[];
 
     return rows.map((r) => ({
       role: r.role as Message["role"],

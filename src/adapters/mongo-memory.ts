@@ -126,14 +126,17 @@ export class MongoMemoryAdapter implements MemoryAdapter {
 
   // ─── Conversation ──────────────────────────────────────────
 
-  async getConversation(sessionId: string): Promise<Message[]> {
-    const docs = await this.messages.find({ sessionId }).toArray();
+  async getConversation(sessionId: string, limit?: number): Promise<Message[]> {
+    const cursor = this.messages.find({ sessionId });
+    const docs = await cursor.toArray();
 
     docs.sort(
       (a, b) => (a["createdAt"] as number) - (b["createdAt"] as number),
     );
 
-    return docs.map((d) => ({
+    const slice = limit !== undefined ? docs.slice(-limit) : docs;
+
+    return slice.map((d) => ({
       role: d["role"] as Message["role"],
       content: d["content"] as string,
       timestamp: d["timestamp"] as string,

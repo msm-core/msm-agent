@@ -16,7 +16,7 @@ import type {
 
 export interface MemoryAdapter {
   // ─── Conversation ──────────────────────────────────────────
-  getConversation(sessionId: string): Promise<Message[]>;
+  getConversation(sessionId: string, limit?: number): Promise<Message[]>;
   addMessage(sessionId: string, message: Message): Promise<void>;
 
   // ─── Task State ────────────────────────────────────────────

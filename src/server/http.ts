@@ -297,7 +297,9 @@ async function handleEvent(
     if (!parsed.success) {
       json(res, 400, {
         error: "Invalid event payload",
-        detail: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+        detail: parsed.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; "),
       });
       return;
     }

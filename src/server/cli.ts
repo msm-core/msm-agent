@@ -80,7 +80,6 @@ import type { ControlBusAdapter } from "../adapters/control-bus.js";
 import type { JobAdapter } from "../adapters/jobs.js";
 import type { McpServerHandle } from "./mcp.js";
 import type { ToolAdapter } from "../adapters/tools.js";
-import { InMemoryJobAdapter } from "../adapters/jobs.js";
 import { loadAgent } from "../definition/index.js";
 import { buildBrain } from "../brains/factory.js";
 import { createAgent } from "../core/agent.js";
@@ -91,15 +90,18 @@ import {
   toGatesConfig,
   renderEquipmentBlock,
 } from "../definition/schema.js";
-import { InMemoryAdapter } from "../adapters-dummy/memory.js";
-import { SQLiteMemoryAdapter } from "../adapters/sqlite-memory.js";
-import { InMemoryControlBus } from "../adapters-dummy/control-bus.js";
 import { MockToolAdapter } from "../adapters-dummy/tools.js";
 import type { KnowledgeAdapter } from "../adapters/knowledge.js";
-import { QdrantKnowledgeAdapter } from "../adapters/qdrant-knowledge.js";
 import { ManualEventAdapter } from "../adapters-dummy/events.js";
 import { ConsoleDeliveryAdapter } from "../adapters-dummy/delivery.js";
 import { createAgentServer } from "./http.js";
+import {
+  buildMemoryAdapter,
+  buildControlBus,
+  buildKnowledgeAdapter,
+  buildEvolvingAdapter,
+  buildJobAdapter,
+} from "./bootstrap.js";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -175,65 +177,13 @@ async function runHub(agentFilesRaw: string): Promise<void> {
     );
   }
 
-  // ── Shared memory adapter ────────────────────────────────
-  const databaseUrl = process.env["DATABASE_URL"];
-  const memoryPath = process.env["MEMORY_PATH"];
-  let memoryAdapter: MemoryAdapter;
-  let sqliteAdapter: SQLiteMemoryAdapter | null = null;
-
-  if (
-    databaseUrl?.startsWith("postgresql://") ||
-    databaseUrl?.startsWith("postgres://")
-  ) {
-    log("Memory: PostgreSQL (shared)");
-    const { PostgresMemoryAdapter } =
-      await import("../adapters/postgres-memory.js");
-    memoryAdapter = await PostgresMemoryAdapter.connect(databaseUrl);
-  } else if (
-    databaseUrl?.startsWith("mongodb://") ||
-    databaseUrl?.startsWith("mongodb+srv://")
-  ) {
-    log("Memory: MongoDB (shared)");
-    const { MongoMemoryAdapter } = await import("../adapters/mongo-memory.js");
-    memoryAdapter = await MongoMemoryAdapter.connect(databaseUrl);
-  } else if (memoryPath) {
-    log(`Memory: SQLite (${memoryPath}) — dev/single-instance only (shared)`);
-    sqliteAdapter = new SQLiteMemoryAdapter(memoryPath);
-    memoryAdapter = sqliteAdapter;
-  } else {
-    log(
-      "Memory: in-memory (state lost on restart — set DATABASE_URL for persistence)",
-    );
-    memoryAdapter = new InMemoryAdapter();
-  }
-
-  const neo4jUrl = process.env["NEO4J_URL"];
-  if (neo4jUrl) {
-    const password = process.env["NEO4J_PASSWORD"];
-    if (!password)
-      throw new Error("NEO4J_PASSWORD is required when NEO4J_URL is set");
-    log(`Memory: Neo4j graph layer (${neo4jUrl}) wrapping primary store`);
-    const { Neo4jMemoryAdapter } = await import("../adapters/neo4j-memory.js");
-    memoryAdapter = await Neo4jMemoryAdapter.connect({
-      url: neo4jUrl,
-      user: process.env["NEO4J_USER"] ?? "neo4j",
-      password,
-      primary: memoryAdapter,
-    });
-  }
-
-  // ── Shared control bus ───────────────────────────────────
-  const redisUrl = process.env["REDIS_URL"];
-  let controlBus: ControlBusAdapter;
-  if (redisUrl) {
-    log(`Control bus: Redis (${redisUrl}) (shared)`);
-    const { RedisControlBus } =
-      await import("../adapters/redis-control-bus.js");
-    controlBus = await RedisControlBus.connect(redisUrl);
-  } else {
-    log("Control bus: in-memory (set REDIS_URL for cross-instance signals)");
-    controlBus = new InMemoryControlBus();
-  }
+  // ── Shared adapters ──────────────────────────────────────
+  const {
+    adapter: memoryAdapter,
+    sqliteAdapter,
+    memoryPath,
+  } = await buildMemoryAdapter(" (shared)");
+  const controlBus = await buildControlBus(" (shared)");
 
   const memoryContext = sqliteAdapter
     ? (q: string) =>
@@ -295,40 +245,7 @@ async function runHub(agentFilesRaw: string): Promise<void> {
     const equipmentBlock = renderEquipmentBlock(def.equipment) ?? undefined;
 
     // KB: each hub agent gets its own collection named <agentName>_kb
-    let agentKb: KnowledgeAdapter | undefined;
-    const qdrantUrl = process.env["QDRANT_URL"];
-    if (qdrantUrl) {
-      const embedProvider =
-        (process.env["EMBED_PROVIDER"] as
-          | "gemini"
-          | "openai"
-          | "ollama"
-          | undefined) ??
-        (process.env["GEMINI_API_KEY"]
-          ? "gemini"
-          : process.env["OPENAI_API_KEY"]
-            ? "openai"
-            : "ollama");
-      const embedApiKey =
-        embedProvider === "gemini"
-          ? process.env["GEMINI_API_KEY"]
-          : embedProvider === "openai"
-            ? process.env["OPENAI_API_KEY"]
-            : undefined;
-      const collection = `${agentName}_kb`;
-      agentKb = QdrantKnowledgeAdapter.create({
-        url: qdrantUrl,
-        apiKey: process.env["QDRANT_API_KEY"],
-        collection,
-        embedProvider,
-        embedApiKey,
-        ollamaUrl:
-          process.env["OLLAMA_EMBED_URL"] ??
-          process.env["OLLAMA_ENDPOINT"] ??
-          "http://localhost:11434",
-      });
-      log(`  KB: Qdrant collection "${collection}" (embed=${embedProvider})`);
-    }
+    const agentKb = buildKnowledgeAdapter(`${agentName}_kb`);
 
     agentHandles[agentName] = createAgent({
       brain,
@@ -348,17 +265,7 @@ async function runHub(agentFilesRaw: string): Promise<void> {
   const hub = createAgentHub(agentHandles);
 
   // ── Jobs ─────────────────────────────────────────────────
-  let jobAdapter: JobAdapter | undefined;
-  if (process.env["ENABLE_JOBS"] === "true") {
-    if (memoryPath) {
-      log(`Jobs: SQLite (${memoryPath})`);
-      const { SQLiteJobAdapter } = await import("../adapters/sqlite-jobs.js");
-      jobAdapter = SQLiteJobAdapter.connect(memoryPath);
-    } else {
-      log("Jobs: in-memory");
-      jobAdapter = new InMemoryJobAdapter();
-    }
-  }
+  const jobAdapter = await buildJobAdapter(memoryPath);
 
   const port = parseInt(process.env["PORT"] ?? "3000", 10);
   const hostAddr = process.env["HOST"] ?? "0.0.0.0";
@@ -435,67 +342,13 @@ async function runSingleAgent(agentFile: string): Promise<void> {
     `Agent: "${def.name}" (${def.brain.provider}/${def.brain.model ?? "default"})`,
   );
 
-  // ── Select memory adapter ────────────────────────────────
-  const databaseUrl = process.env["DATABASE_URL"];
-  const memoryPath = process.env["MEMORY_PATH"];
-
-  let memoryAdapter: MemoryAdapter;
-  let sqliteAdapter: SQLiteMemoryAdapter | null = null;
-
-  if (
-    databaseUrl?.startsWith("postgresql://") ||
-    databaseUrl?.startsWith("postgres://")
-  ) {
-    log("Memory: PostgreSQL");
-    const { PostgresMemoryAdapter } =
-      await import("../adapters/postgres-memory.js");
-    memoryAdapter = await PostgresMemoryAdapter.connect(databaseUrl);
-  } else if (
-    databaseUrl?.startsWith("mongodb://") ||
-    databaseUrl?.startsWith("mongodb+srv://")
-  ) {
-    log("Memory: MongoDB");
-    const { MongoMemoryAdapter } = await import("../adapters/mongo-memory.js");
-    memoryAdapter = await MongoMemoryAdapter.connect(databaseUrl);
-  } else if (memoryPath) {
-    log(`Memory: SQLite (${memoryPath}) — dev/single-instance only`);
-    sqliteAdapter = new SQLiteMemoryAdapter(memoryPath);
-    memoryAdapter = sqliteAdapter;
-  } else {
-    log(
-      "Memory: in-memory (state lost on restart — set DATABASE_URL for persistence)",
-    );
-    memoryAdapter = new InMemoryAdapter();
-  }
-
-  // ── Neo4j graph enrichment (optional, wraps primary store) ──
-  const neo4jUrl = process.env["NEO4J_URL"];
-  if (neo4jUrl) {
-    const password = process.env["NEO4J_PASSWORD"];
-    if (!password)
-      throw new Error("NEO4J_PASSWORD is required when NEO4J_URL is set");
-    log(`Memory: Neo4j graph layer (${neo4jUrl}) wrapping primary store`);
-    const { Neo4jMemoryAdapter } = await import("../adapters/neo4j-memory.js");
-    memoryAdapter = await Neo4jMemoryAdapter.connect({
-      url: neo4jUrl,
-      user: process.env["NEO4J_USER"] ?? "neo4j",
-      password,
-      primary: memoryAdapter,
-    });
-  }
-
-  // ── Select control bus ───────────────────────────────────
-  const redisUrl = process.env["REDIS_URL"];
-  let controlBus: ControlBusAdapter;
-  if (redisUrl) {
-    log(`Control bus: Redis (${redisUrl})`);
-    const { RedisControlBus } =
-      await import("../adapters/redis-control-bus.js");
-    controlBus = await RedisControlBus.connect(redisUrl);
-  } else {
-    log("Control bus: in-memory (set REDIS_URL for cross-instance signals)");
-    controlBus = new InMemoryControlBus();
-  }
+  // ── Select adapters from env vars ───────────────────────
+  const {
+    adapter: memoryAdapter,
+    sqliteAdapter,
+    memoryPath,
+  } = await buildMemoryAdapter();
+  const controlBus = await buildControlBus();
 
   // ── L4 memory context for the 5-layer prompt ────────────
   // SQLite has a synchronous search; for Postgres/Mongo the context builder
@@ -527,8 +380,6 @@ async function runSingleAgent(agentFile: string): Promise<void> {
   const events = new ManualEventAdapter();
 
   // ── WhatsApp channel (optional) ──────────────────────────
-  // When WHATSAPP_GATEWAY_URL is set, wire the WhatsApp delivery + event adapters.
-  // The gateway forwards inbound messages to POST /webhook/whatsapp on this server.
   const whatsAppGatewayUrl = process.env["WHATSAPP_GATEWAY_URL"];
   const whatsAppTenantId = process.env["WHATSAPP_TENANT_ID"];
   const whatsAppAccountId = process.env["WHATSAPP_ACCOUNT_ID"];
@@ -554,79 +405,27 @@ async function runSingleAgent(agentFile: string): Promise<void> {
       tenantId: whatsAppTenantId,
       accountId: whatsAppAccountId,
     });
-    // Wire the event adapter so inbound webhooks flow into the agent loop.
-    // (Registration is deferred to after createAgent below.)
   } else {
     log("Channel: console (set WHATSAPP_GATEWAY_URL to enable WhatsApp)");
     delivery = new ConsoleDeliveryAdapter();
   }
 
-  // ── Create and start agent ───────────────────────────────
   // ── Evolving Layer (optional) ─────────────────────────────
-  let evolvingAdapter:
-    | import("../adapters/evolving.js").EvolvingAdapter
-    | undefined;
-  const evolvingMode = process.env["EVOLVING_MODE"];
-  if (evolvingMode === "shadow" || evolvingMode === "assist") {
-    log(`Evolving: ${evolvingMode} mode`);
-    const { MemoryEvolvingAdapter } = await import("../adapters/evolving.js");
-    evolvingAdapter = new MemoryEvolvingAdapter(memoryAdapter, evolvingMode);
-    // Phase 14 — Self-Improving Loop: analyse accumulated quality flags on startup
-    if (evolvingMode === "assist" && evolvingAdapter.refreshStrategies) {
-      await evolvingAdapter.refreshStrategies(memoryAdapter).catch(() => {});
-      log("Evolving: strategy notes refreshed from quality history");
-    }
-  }
+  const evolvingAdapter = await buildEvolvingAdapter(memoryAdapter);
 
   const agentConfig = toAgentConfig(def);
   const gatesConfig = toGatesConfig(def);
   const equipmentBlock = renderEquipmentBlock(def.equipment) ?? undefined;
 
   // ── Knowledge Base (Qdrant, optional) ───────────────────
-  let knowledgeAdapter: KnowledgeAdapter | undefined;
-  const qdrantUrl = process.env["QDRANT_URL"];
-  if (qdrantUrl) {
-    const embedProvider =
-      (process.env["EMBED_PROVIDER"] as
-        | "gemini"
-        | "openai"
-        | "ollama"
-        | undefined) ??
-      (process.env["GEMINI_API_KEY"]
-        ? "gemini"
-        : process.env["OPENAI_API_KEY"]
-          ? "openai"
-          : "ollama");
-
-    const embedApiKey =
-      embedProvider === "gemini"
-        ? process.env["GEMINI_API_KEY"]
-        : embedProvider === "openai"
-          ? process.env["OPENAI_API_KEY"]
-          : undefined;
-
-    const collectionDefault =
-      def.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "") + "_kb";
-
-    knowledgeAdapter = QdrantKnowledgeAdapter.create({
-      url: qdrantUrl,
-      apiKey: process.env["QDRANT_API_KEY"],
-      collection: process.env["QDRANT_COLLECTION"] ?? collectionDefault,
-      embedProvider,
-      embedApiKey,
-      embedModel: process.env["EMBED_MODEL"],
-      ollamaUrl:
-        process.env["OLLAMA_EMBED_URL"] ??
-        process.env["OLLAMA_ENDPOINT"] ??
-        "http://localhost:11434",
-    });
-    log(
-      `Knowledge: Qdrant (${qdrantUrl}) — embed=${embedProvider}, collection=${process.env["QDRANT_COLLECTION"] ?? collectionDefault}`,
-    );
-  }
+  const collectionDefault =
+    def.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") + "_kb";
+  const knowledgeAdapter = buildKnowledgeAdapter(
+    process.env["QDRANT_COLLECTION"] ?? collectionDefault,
+  );
 
   const agent = createAgent({
     brain,
@@ -656,17 +455,7 @@ async function runSingleAgent(agentFile: string): Promise<void> {
   const dashboardPassword = process.env["DASHBOARD_PASSWORD"];
 
   // ── Jobs (optional feature) ──────────────────────────────
-  let jobAdapter: JobAdapter | undefined;
-  if (process.env["ENABLE_JOBS"] === "true") {
-    if (memoryPath) {
-      log(`Jobs: SQLite (${memoryPath})`);
-      const { SQLiteJobAdapter } = await import("../adapters/sqlite-jobs.js");
-      jobAdapter = SQLiteJobAdapter.connect(memoryPath);
-    } else {
-      log("Jobs: in-memory (set MEMORY_PATH to persist jobs across restarts)");
-      jobAdapter = new InMemoryJobAdapter();
-    }
-  }
+  const jobAdapter = await buildJobAdapter(memoryPath);
 
   const server = createAgentServer(agent, def, {
     port,

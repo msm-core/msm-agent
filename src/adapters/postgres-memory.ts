@@ -130,13 +130,23 @@ export class PostgresMemoryAdapter implements MemoryAdapter {
 
   // ─── Conversation ──────────────────────────────────────────
 
-  async getConversation(sessionId: string): Promise<Message[]> {
-    const rows = (await (this.sql as SqlTag)`
-      SELECT role, content, ts
-      FROM   agent_messages
-      WHERE  session_id = ${sessionId}
-      ORDER  BY created_at ASC
-    `) as unknown as MessageRow[];
+  async getConversation(sessionId: string, limit?: number): Promise<Message[]> {
+    const rows = (limit !== undefined
+      ? (
+          await (this.sql as SqlTag)`
+        SELECT role, content, ts
+        FROM   agent_messages
+        WHERE  session_id = ${sessionId}
+        ORDER  BY created_at DESC
+        LIMIT  ${limit}
+      `
+        ).reverse()
+      : await (this.sql as SqlTag)`
+        SELECT role, content, ts
+        FROM   agent_messages
+        WHERE  session_id = ${sessionId}
+        ORDER  BY created_at ASC
+      `) as unknown as MessageRow[];
 
     return rows.map((r) => ({
       role: r.role as Message["role"],

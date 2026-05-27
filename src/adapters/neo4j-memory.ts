@@ -193,8 +193,8 @@ export class Neo4jMemoryAdapter implements MemoryAdapter {
 
   // ─── Delegate conversation + task ops to primary ───────────
 
-  getConversation(sessionId: string): Promise<Message[]> {
-    return this.primary.getConversation(sessionId);
+  getConversation(sessionId: string, limit?: number): Promise<Message[]> {
+    return this.primary.getConversation(sessionId, limit);
   }
   addMessage(sessionId: string, message: Message): Promise<void> {
     return this.primary.addMessage(sessionId, message);

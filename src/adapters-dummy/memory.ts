@@ -17,8 +17,9 @@ export class InMemoryAdapter implements MemoryAdapter {
   private memories: MemoryEntry[] = [];
   private runStates = new Map<string, RunState>();
 
-  async getConversation(sessionId: string): Promise<Message[]> {
-    return this.conversations.get(sessionId) ?? [];
+  async getConversation(sessionId: string, limit?: number): Promise<Message[]> {
+    const msgs = this.conversations.get(sessionId) ?? [];
+    return limit !== undefined ? msgs.slice(-limit) : msgs;
   }
 
   async addMessage(sessionId: string, message: Message): Promise<void> {

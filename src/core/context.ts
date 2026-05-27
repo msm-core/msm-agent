@@ -77,8 +77,8 @@ export async function buildContext(
   const { sessionId, text, modality, memory, state, lastToolResult, task } =
     options;
 
-  // Fetch conversation history
-  const messages = await memory.getConversation(sessionId);
+  // Fetch conversation history (last 50 messages — prevents all-time history blowup)
+  const messages = await memory.getConversation(sessionId, 50);
 
   // Compact history — custom hook or built-in heuristic
   const history = options.compactHistory
