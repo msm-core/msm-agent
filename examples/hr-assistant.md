@@ -49,24 +49,26 @@ Cost cap: 0.10
 ## Skills
 
 skills:
-  - name: leave_calculator
-    description: Calculate remaining leave days based on policy and hire date
-    input:
-      employee_id: string
-      leave_type: annual | sick | emergency
-    output:
-      remaining_days: number
-      next_accrual_date: string
+
+- name: leave_calculator
+  description: Calculate remaining leave days based on policy and hire date
+  input:
+  employee_id: string
+  leave_type: annual | sick | emergency
+  output:
+  remaining_days: number
+  next_accrual_date: string
 
 ## Equipment
 
 connectors:
-  - type: hrms
-    operations: [employee.get, leave.balance, leave.submit, payslip.list, document.upload]
-    access: read_write
-    endpoint: ${HRMS_URL}
-    credentials:
-      type: oauth2
-      client_id: ${HRMS_CLIENT_ID}
-      client_secret: ${HRMS_CLIENT_SECRET}
-      token_url: ${HRMS_TOKEN_URL}
+
+- type: hrms
+  operations: [employee.get, leave.balance, leave.submit, payslip.list, document.upload]
+  access: read_write
+  endpoint: ${HRMS_URL}
+  credentials:
+  type: oauth2
+  client_id: ${HRMS_CLIENT_ID}
+  client_secret: ${HRMS_CLIENT_SECRET}
+  token_url: ${HRMS_TOKEN_URL}

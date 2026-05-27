@@ -48,10 +48,11 @@ Confidence threshold: 0.75
 ## Equipment
 
 connectors:
-  - type: government_portal
-    operations: [application.status, service.requirements, appointment.book, department.lookup]
-    access: read_only
-    endpoint: ${GOV_PORTAL_URL}
-    credentials:
-      type: api_key
-      value: ${GOV_PORTAL_KEY}
+
+- type: government_portal
+  operations: [application.status, service.requirements, appointment.book, department.lookup]
+  access: read_only
+  endpoint: ${GOV_PORTAL_URL}
+  credentials:
+  type: api_key
+  value: ${GOV_PORTAL_KEY}

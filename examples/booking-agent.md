@@ -48,10 +48,11 @@ Confidence threshold: 0.65
 ## Equipment
 
 connectors:
-  - type: booking_system
-    operations: [slots.list, appointment.get, appointment.book, appointment.reschedule, appointment.cancel]
-    access: read_write
-    endpoint: ${BOOKING_SYSTEM_URL}
-    credentials:
-      type: api_key
-      value: ${BOOKING_SYSTEM_KEY}
+
+- type: booking_system
+  operations: [slots.list, appointment.get, appointment.book, appointment.reschedule, appointment.cancel]
+  access: read_write
+  endpoint: ${BOOKING_SYSTEM_URL}
+  credentials:
+  type: api_key
+  value: ${BOOKING_SYSTEM_KEY}
