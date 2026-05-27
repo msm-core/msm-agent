@@ -33,8 +33,8 @@ const SENSITIVE_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   },
   // SSN pattern
   { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "ssn" },
-  // Saudi national ID (10 digits starting with 1 or 2)
-  { pattern: /\b[12]\d{9}\b/g, label: "saudi_national_id" },
+  // Qatari national ID / QID (11 digits)
+  { pattern: /\b\d{11}\b/g, label: "qatari_national_id" },
   // Control characters (safety)
   { pattern: /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, label: "control_char" },
 ];

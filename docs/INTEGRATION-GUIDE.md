@@ -747,7 +747,7 @@ All agent responses are automatically sanitized before delivery:
 - Generic secret patterns (`api_key=...`, `token: ...`)
 - Credit card numbers
 - SSN patterns
-- Saudi national IDs
+- Qatari national IDs (QID)
 - Control characters
 
 Redacted values become `[REDACTED]`. The `SanitizeResult` includes a list of what was redacted for logging.

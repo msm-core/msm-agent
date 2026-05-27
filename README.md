@@ -79,7 +79,7 @@ costCapPerTask: 0.05
 
 ## Hours
 
-Timezone: Asia/Riyadh
+Timezone: Asia/Qatar
 Mon-Fri: 09:00-18:00
 Sat: 10:00-14:00
 Message: We are currently closed. We'll respond first thing in the morning.
@@ -545,7 +545,7 @@ Returns a configurable canned message outside working hours. No LLM call.
 ```markdown
 ## Hours
 
-Timezone: Asia/Riyadh
+Timezone: Asia/Qatar
 Mon-Fri: 09:00-18:00
 Sat: 10:00-14:00
 Message: We are currently closed. We will respond first thing when we open.
@@ -560,7 +560,7 @@ const agent = createAgent({
   gates: {
     acknowledgement: true,
     businessHours: {
-      timezone: "Asia/Riyadh",
+      timezone: "Asia/Qatar",
       schedule: { "Mon-Fri": "09:00-18:00", Sat: "10:00-14:00" },
       closedMessage: "We are closed. Open Mon–Fri 9am–6pm.",
     },

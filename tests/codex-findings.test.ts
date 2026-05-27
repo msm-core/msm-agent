@@ -141,7 +141,7 @@ describe("task resumption", () => {
       makePayload({
         orchestration: makeOrch({ action: "respond" }),
         final_output: {
-          text: "Booked in Riyadh!",
+          text: "Booked in Doha!",
           language: "en",
           total_latency_ms: 10,
           pipeline_status: "ok",
@@ -151,7 +151,7 @@ describe("task resumption", () => {
 
     // Replace brain for this call
     const deps2 = makeDeps(brain2, { memory });
-    const outcome2 = await executeEvent(userEvent("Riyadh", "s-resume"), deps2);
+    const outcome2 = await executeEvent(userEvent("Doha", "s-resume"), deps2);
     expect(outcome2.type).toBe("response");
 
     // The original task should now be completed — NOT a new task
