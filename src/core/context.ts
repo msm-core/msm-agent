@@ -123,11 +123,14 @@ export async function buildContext(
     }
   }
   // ── Knowledge Base (vector search) ────────────────────────────
-  if (options.knowledge) {
+  // Only search the KB on the first iteration (iteration === 0).
+  // On subsequent iterations the brain is already mid-task; embedding the
+  // tool-result JSON blob is wasteful and rarely returns relevant chunks.
+  if (options.knowledge && state.iteration === 0) {
     try {
       const hits = await options.knowledge.search(text, {
         topK: 5,
-        minScore: 0.15,
+        minScore: 0.45,
       });
       if (hits.length > 0) {
         const kbLines = hits.map(

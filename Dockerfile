@@ -76,6 +76,7 @@ EXPOSE 3000
 
 ENV PORT=3000
 ENV HOST=0.0.0.0
-
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:${PORT}/health || exit 1
 # node:sqlite is stable in Node 22.12+ — no --experimental-sqlite flag needed.
 ENTRYPOINT ["node", "dist/server/cli.js"]

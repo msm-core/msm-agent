@@ -133,6 +133,7 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
           Authorization: `Bearer ${opts.apiKey}`,
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!res.ok) {

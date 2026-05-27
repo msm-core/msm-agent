@@ -140,6 +140,19 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
   /** Whether the collection has been confirmed to exist in Qdrant this session. */
   private collectionReady = false;
 
+  /**
+   * LRU cache for embedding vectors.
+   * Key: truncated text (2048 chars). Value: { vec, ts }.
+   * Evicts oldest entry when capacity is reached.
+   * TTL: 5 minutes (embeddings are deterministic but APIs may change models).
+   */
+  private readonly embedCache = new Map<
+    string,
+    { vec: number[]; ts: number }
+  >();
+  private static readonly EMBED_CACHE_MAX = 256;
+  private static readonly EMBED_CACHE_TTL_MS = 5 * 60 * 1000;
+
   private constructor(opts: Required<QdrantKnowledgeOptions>) {
     this.baseUrl = opts.url.replace(/\/$/, "");
     this.apiKey = opts.apiKey;
@@ -282,7 +295,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
     // Check if collection already exists
     const checkRes = await fetch(
       `${this.baseUrl}/collections/${this.collection}`,
-      { headers },
+      { headers, signal: AbortSignal.timeout(30_000) },
     );
 
     if (checkRes.status === 404) {
@@ -295,6 +308,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
           body: JSON.stringify({
             vectors: { size: this.vectorSize, distance: "Cosine" },
           }),
+          signal: AbortSignal.timeout(30_000),
         },
       );
       if (!createRes.ok) {
@@ -332,6 +346,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         method: "POST",
         headers: this.qdrantHeaders(),
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -353,6 +368,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         method: "POST",
         headers: this.qdrantHeaders(),
         body: JSON.stringify({ filter, limit: 1000, with_payload: true }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -376,6 +392,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         method: "PUT",
         headers: this.qdrantHeaders(),
         body: JSON.stringify({ points }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -392,6 +409,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         method: "POST",
         headers: this.qdrantHeaders(),
         body: JSON.stringify({ filter }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -405,14 +423,36 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
 
   private async embed(text: string): Promise<number[]> {
     const truncated = text.slice(0, 2048);
+
+    // Check cache first.
+    const cached = this.embedCache.get(truncated);
+    if (
+      cached &&
+      Date.now() - cached.ts < QdrantKnowledgeAdapter.EMBED_CACHE_TTL_MS
+    ) {
+      return cached.vec;
+    }
+
+    let vec: number[];
     switch (this.provider) {
       case "gemini":
-        return this.embedGemini(truncated);
+        vec = await this.embedGemini(truncated);
+        break;
       case "openai":
-        return this.embedOpenAI(truncated);
+        vec = await this.embedOpenAI(truncated);
+        break;
       case "ollama":
-        return this.embedOllama(truncated);
+        vec = await this.embedOllama(truncated);
+        break;
     }
+
+    // Evict oldest entry if at capacity.
+    if (this.embedCache.size >= QdrantKnowledgeAdapter.EMBED_CACHE_MAX) {
+      const oldest = this.embedCache.keys().next().value;
+      if (oldest !== undefined) this.embedCache.delete(oldest);
+    }
+    this.embedCache.set(truncated, { vec, ts: Date.now() });
+    return vec;
   }
 
   private async embedBatch(texts: string[]): Promise<number[][]> {
@@ -442,6 +482,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         content: { parts: [{ text }] },
         outputDimensionality: this.vectorSize,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
@@ -476,6 +517,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
             outputDimensionality: this.vectorSize,
           })),
         }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
@@ -507,6 +549,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
         input: text,
         dimensions: this.vectorSize,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {
@@ -539,6 +582,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
           input: slice,
           dimensions: this.vectorSize,
         }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
@@ -563,6 +607,7 @@ export class QdrantKnowledgeAdapter implements KnowledgeAdapter {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, input: text }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) {

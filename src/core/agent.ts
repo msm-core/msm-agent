@@ -253,5 +253,17 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     async stop(): Promise<void> {
       await options.events.stop();
     },
+
+    async close(): Promise<void> {
+      await options.events.stop().catch(() => {});
+      // Best-effort release of optional adapter resources.
+      const closeable = options as unknown as Record<string, unknown>;
+      for (const key of ["memory", "tools", "knowledge", "delivery", "jobs"]) {
+        const adapter = closeable[key] as
+          | { close?: () => Promise<void> }
+          | undefined;
+        await adapter?.close?.().catch(() => {});
+      }
+    },
   };
 }

@@ -372,6 +372,7 @@ async function runHub(agentFilesRaw: string): Promise<void> {
     dashboardPassword,
     jobs: jobAdapter,
     sovereign,
+    apiKey: process.env["API_KEY"],
   });
   await server.start();
 
@@ -676,6 +677,7 @@ async function runSingleAgent(agentFile: string): Promise<void> {
     whatsAppEvents,
     jobs: jobAdapter,
     sovereign,
+    apiKey: process.env["API_KEY"],
   });
   await server.start();
 

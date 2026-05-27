@@ -75,6 +75,14 @@ export interface ServerOptions {
    */
   jobs?: JobAdapter;
   /**
+   * Optional Bearer API key.
+   * When set, all routes except GET /health require
+   *   Authorization: Bearer <apiKey>
+   * Callers without the key receive 401.
+   * Use this when the agent is exposed beyond a trusted network boundary.
+   */
+  apiKey?: string;
+  /**
    * Sovereign mode flag — Phase 16.
    * When true, the /health response includes `"sovereign": true` to confirm
    * that no cloud credentials are in use and all processing is local.
@@ -109,10 +117,21 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB hard limit
+
 async function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let total = 0;
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error("413"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
@@ -137,8 +156,27 @@ function checkBasicAuth(req: IncomingMessage, password: string): boolean {
   const colonIdx = decoded.indexOf(":");
   const supplied = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
   try {
-    const a = Buffer.from(supplied.padEnd(password.length));
+    const a = Buffer.from(supplied);
     const b = Buffer.from(password);
+    // Reject on length mismatch before constant-time compare to avoid length oracle.
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check Bearer API key for non-admin routes.
+ * Uses constant-time comparison to prevent timing attacks.
+ */
+function checkApiKey(req: IncomingMessage, apiKey: string): boolean {
+  const header = req.headers["authorization"];
+  if (!header || !header.startsWith("Bearer ")) return false;
+  const supplied = header.slice(7).trim();
+  try {
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(apiKey);
     if (a.length !== b.length) return false;
     return timingSafeEqual(a, b);
   } catch {
@@ -945,6 +983,7 @@ export function createAgentServer(
     whatsAppEvents,
     jobs,
     sovereign,
+    apiKey,
   } = opts;
   const controlState = emptyControlState();
 
@@ -958,7 +997,7 @@ export function createAgentServer(
     // Strip query string for routing; preserve full URL for admin/memory
     const url = req.url?.split("?")[0] ?? "/";
 
-    // GET /health
+    // GET /health — always unauthenticated (liveness/readiness probes)
     if (url === "/health" && req.method === "GET") {
       if (hub) {
         handleHubHealth(req, res, hub, hubDefs, sovereign);
@@ -967,6 +1006,12 @@ export function createAgentServer(
           json(res, 500, { error: String(err) });
         });
       }
+      return;
+    }
+
+    // API key guard — applies to all routes below when apiKey is configured.
+    if (apiKey && !checkApiKey(req, apiKey)) {
+      json(res, 401, { error: "Unauthorized — missing or invalid API key" });
       return;
     }
 

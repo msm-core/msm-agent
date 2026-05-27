@@ -35,7 +35,9 @@ export interface KnowledgeSearchOpts {
   topK?: number;
   /**
    * Minimum score threshold — hits below this are discarded.
-   * @default 0.15
+   * Cosine similarity ranges 0\u20131; 0.45 is a good default for meaningful semantic matches.
+   * Values below 0.3 will often return unrelated content.
+   * @default 0.45
    */
   minScore?: number;
   /**

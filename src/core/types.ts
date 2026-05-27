@@ -316,6 +316,11 @@ export interface AgentHandle {
   start(): Promise<void>;
   /** Stop listening for events */
   stop(): Promise<void>;
+  /**
+   * Release all resources held by the agent (adapters, connections, timers).
+   * Call after stop() during graceful shutdown. Idempotent.
+   */
+  close(): Promise<void>;
 }
 
 // ─── Audit Trail ─────────────────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "msm-agent",
-  "version": "0.3.2",
+  "version": "0.4.1",
   "description": "Portable agent framework — brain-agnostic execution core for AI agents",
   "type": "module",
   "main": "dist/index.js",

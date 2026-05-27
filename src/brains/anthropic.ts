@@ -109,6 +109,7 @@ export function createAnthropicBrain(opts: AnthropicBrainOptions): Brain {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!res.ok) {

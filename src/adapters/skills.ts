@@ -86,14 +86,19 @@ export const SkillRegistry = {
 
   /**
    * Resolve a skill name to its tool definitions.
-   * Returns [] if the name is not registered or the factory throws.
+   * Returns [] if the name is not registered.
+   * Logs an error and returns [] if the factory throws.
    */
   resolve(name: string, options?: SkillOptions): SkillToolDef[] {
     const factory = this._factories.get(name.toLowerCase());
     if (!factory) return [];
     try {
       return factory(options);
-    } catch {
+    } catch (err) {
+      console.error(
+        `[msm-agent] SkillRegistry: factory for "${name}" threw — skill tools will be unavailable:`,
+        err,
+      );
       return [];
     }
   },
