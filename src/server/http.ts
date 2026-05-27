@@ -48,6 +48,43 @@ import {
 import type { JobAdapter, Job, JobStatus } from "../adapters/jobs.js";
 import { generateJobId } from "../adapters/jobs.js";
 import { buildDashboardHtml } from "./dashboard.js";
+import { z } from "zod";
+
+// ─── AgentEvent Zod schema ────────────────────────────────────────────────────
+// Mirrors the AgentEvent discriminated union in core/types.ts.
+// Used to validate incoming HTTP payloads before they reach the loop.
+const agentEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("user_message"),
+    sessionId: z.string().min(1),
+    text: z.string(),
+    modality: z.enum(["text", "voice", "image"]),
+  }),
+  z.object({
+    type: z.literal("tool_callback"),
+    sessionId: z.string().min(1),
+    taskId: z.string().min(1),
+    result: z.object({ tool: z.string(), result: z.unknown() }),
+  }),
+  z.object({
+    type: z.literal("approval_callback"),
+    sessionId: z.string().min(1),
+    taskId: z.string().min(1),
+    approved: z.boolean(),
+    decidedBy: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("webhook"),
+    sessionId: z.string().min(1),
+    source: z.string(),
+    payload: z.unknown(),
+  }),
+  z.object({
+    type: z.literal("cron"),
+    taskType: z.string().min(1),
+    payload: z.unknown().optional(),
+  }),
+]);
 
 export interface ServerOptions {
   port?: number;
@@ -255,14 +292,18 @@ async function handleEvent(
 
   let event: AgentEvent;
   try {
-    event = JSON.parse(body) as AgentEvent;
+    const raw: unknown = JSON.parse(body);
+    const parsed = agentEventSchema.safeParse(raw);
+    if (!parsed.success) {
+      json(res, 400, {
+        error: "Invalid event payload",
+        detail: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      });
+      return;
+    }
+    event = parsed.data as AgentEvent;
   } catch {
     json(res, 400, { error: "Invalid JSON in request body" });
-    return;
-  }
-
-  if (!event.type) {
-    json(res, 400, { error: "Missing required field: type" });
     return;
   }
 

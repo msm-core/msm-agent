@@ -100,7 +100,7 @@ export class BullMQEventAdapter implements EventAdapter {
   ): Promise<BullMQEventAdapter> {
     let BullMQModule: { Queue: QueueConstructor; Worker: WorkerConstructor };
     try {
-      // @ts-ignore — optional peer dep: pnpm add bullmq ioredis
+      // @ts-expect-error — optional peer dep: pnpm add bullmq ioredis
       BullMQModule = (await import("bullmq")) as typeof BullMQModule;
     } catch {
       throw new Error(

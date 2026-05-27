@@ -924,6 +924,8 @@ AGENT_FILES=./feasibility.md,./legal.md,./hr.md \
 
 → **Docker Compose, all environment variables, and deployment guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
+> **Security notice:** The HTTP server has no TLS built in. In any deployment beyond local dev you **must** place it behind an HTTPS-terminating reverse proxy (nginx, Caddy, an AWS ALB, etc.). For multi-user or public deployments also add an authentication gateway in front — the built-in `API_KEY` / Basic Auth options are a last line of defence, not a substitute for transport-layer security.
+
 ### Multi-Agent Hub (v0.3.0)
 
 Run multiple agents in a single process with shared infrastructure (MongoDB, Redis, Qdrant, BullMQ).

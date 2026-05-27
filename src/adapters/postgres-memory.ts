@@ -112,7 +112,7 @@ export class PostgresMemoryAdapter implements MemoryAdapter {
   static async connect(url: string): Promise<PostgresMemoryAdapter> {
     let postgres: (url: string) => Sql;
     try {
-      // @ts-ignore — optional peer dep: pnpm add postgres
+      // @ts-expect-error — optional peer dep: pnpm add postgres
       const mod = await import("postgres");
       postgres = (mod.default ?? mod) as typeof postgres;
     } catch {

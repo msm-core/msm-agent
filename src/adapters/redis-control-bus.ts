@@ -54,7 +54,7 @@ export class RedisControlBus implements ControlBusAdapter {
   static async connect(url: string): Promise<RedisControlBus> {
     let Redis: new (url: string) => RedisLike;
     try {
-      // @ts-ignore — optional peer dep: pnpm add ioredis
+      // @ts-expect-error — optional peer dep: pnpm add ioredis
       const mod = await import("ioredis");
       Redis = (mod.default ?? mod) as typeof Redis;
     } catch {

@@ -99,7 +99,7 @@ export class MongoMemoryAdapter implements MemoryAdapter {
   static async connect(url: string): Promise<MongoMemoryAdapter> {
     let MongoClient: new (url: string) => MongoClientLike;
     try {
-      // @ts-ignore — optional peer dep: pnpm add mongodb
+      // @ts-expect-error — optional peer dep: pnpm add mongodb
       const mod = await import("mongodb");
       MongoClient = (mod.MongoClient ??
         mod.default?.MongoClient) as typeof MongoClient;
