@@ -92,6 +92,12 @@ export type {
 export type { EventAdapter } from "./adapters/events.js";
 export type { DeliveryAdapter } from "./adapters/delivery.js";
 export type { ControlBusAdapter } from "./adapters/control-bus.js";
+export type {
+  KnowledgeAdapter,
+  KnowledgeHit,
+  KnowledgeSearchOpts,
+  KnowledgeIndexOpts,
+} from "./adapters/knowledge.js";
 
 // ─── Production Adapters ──────────────────────────────────────
 // All adapters are selected automatically in the CLI via environment variables.
@@ -118,6 +124,19 @@ export type { Neo4jMemoryAdapterOptions } from "./adapters/neo4j-memory.js";
 // Redis — distributed control bus: kill/pause/disable signals (pnpm add ioredis)
 // Activate: REDIS_URL=redis://host:6379
 export { RedisControlBus } from "./adapters/redis-control-bus.js";
+
+// Qdrant — vector knowledge base: semantic search over indexed documents (no extra dep)
+// Uses pure REST API — no SDK required. Works with Qdrant OSS and Qdrant Cloud.
+// Activate: QDRANT_URL=http://localhost:6333 (set EMBED_PROVIDER + key for embeddings)
+// Embedding providers: gemini (GEMINI_API_KEY) | openai (OPENAI_API_KEY) | ollama (local)
+export {
+  QdrantKnowledgeAdapter,
+  smartChunk,
+} from "./adapters/qdrant-knowledge.js";
+export type {
+  QdrantKnowledgeOptions,
+  EmbedProvider,
+} from "./adapters/qdrant-knowledge.js";
 
 // BullMQ — durable async event queue built on Redis (pnpm add bullmq ioredis)
 // Use for background jobs, cron scheduling, and retry semantics.

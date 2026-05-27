@@ -116,6 +116,13 @@ export interface LoopDeps {
    * Tells the LLM explicitly which external systems it can reach and at what access level.
    */
   equipmentBlock?: string;
+  /**
+   * Optional: vector knowledge base adapter.
+   * When provided, the top-K most relevant KB chunks are injected into the brain
+   * prompt as [knowledge] context on every iteration.
+   * Set via createAgent({ knowledge: QdrantKnowledgeAdapter.create(...) })
+   */
+  knowledge?: import("../adapters/knowledge.js").KnowledgeAdapter;
 }
 
 /**
@@ -334,6 +341,7 @@ export async function executeEvent(
       compactHistory: deps.compactHistory,
       evolvingHints: deps.evolvingHints,
       equipmentBlock: deps.equipmentBlock,
+      knowledge: deps.knowledge,
     });
 
     // ─── Call Brain (with error handling) ──────────────────

@@ -55,7 +55,24 @@
  *   OPENAI_API_KEY    OpenAI API key                             [if provider=openai]
  *   OPENAI_BASE_URL   Override base URL (Azure, proxies)         [optional]
  *   ANTHROPIC_API_KEY Anthropic API key                          [if provider=anthropic]
+ *   GEMINI_API_KEY    Google Gemini API key                      [if embed_provider=gemini]
  *   OLLAMA_ENDPOINT   Ollama base URL                            [default: http://localhost:11434]
+ *
+ * ── Knowledge Base (Qdrant vector KB, optional) ────────────────────
+ *
+ *   QDRANT_URL        Qdrant base URL                            [enables KB]
+ *     http://localhost:6333  → local Qdrant
+ *     https://...qdrant.io   → Qdrant Cloud (add QDRANT_API_KEY)
+ *
+ *   QDRANT_COLLECTION Collection name                            [default: <agent-name>_kb]
+ *   QDRANT_API_KEY    Qdrant Cloud API key                       [optional]
+ *
+ *   EMBED_PROVIDER    Embedding provider: gemini | openai | ollama  [default: auto]
+ *                       gemini  → requires GEMINI_API_KEY
+ *                       openai  → requires OPENAI_API_KEY
+ *                       ollama  → no key needed (local)
+ *   EMBED_MODEL       Override embedding model                   [optional]
+ *   OLLAMA_EMBED_URL  Ollama base URL for embeddings             [default: OLLAMA_ENDPOINT]
  */
 
 import type { MemoryAdapter } from "../adapters/memory.js";
@@ -78,6 +95,8 @@ import { InMemoryAdapter } from "../adapters-dummy/memory.js";
 import { SQLiteMemoryAdapter } from "../adapters/sqlite-memory.js";
 import { InMemoryControlBus } from "../adapters-dummy/control-bus.js";
 import { MockToolAdapter } from "../adapters-dummy/tools.js";
+import type { KnowledgeAdapter } from "../adapters/knowledge.js";
+import { QdrantKnowledgeAdapter } from "../adapters/qdrant-knowledge.js";
 import { ManualEventAdapter } from "../adapters-dummy/events.js";
 import { ConsoleDeliveryAdapter } from "../adapters-dummy/delivery.js";
 import { createAgentServer } from "./http.js";
@@ -275,6 +294,42 @@ async function runHub(agentFilesRaw: string): Promise<void> {
     const gatesConfig = toGatesConfig(def);
     const equipmentBlock = renderEquipmentBlock(def.equipment) ?? undefined;
 
+    // KB: each hub agent gets its own collection named <agentName>_kb
+    let agentKb: KnowledgeAdapter | undefined;
+    const qdrantUrl = process.env["QDRANT_URL"];
+    if (qdrantUrl) {
+      const embedProvider =
+        (process.env["EMBED_PROVIDER"] as
+          | "gemini"
+          | "openai"
+          | "ollama"
+          | undefined) ??
+        (process.env["GEMINI_API_KEY"]
+          ? "gemini"
+          : process.env["OPENAI_API_KEY"]
+            ? "openai"
+            : "ollama");
+      const embedApiKey =
+        embedProvider === "gemini"
+          ? process.env["GEMINI_API_KEY"]
+          : embedProvider === "openai"
+            ? process.env["OPENAI_API_KEY"]
+            : undefined;
+      const collection = `${agentName}_kb`;
+      agentKb = QdrantKnowledgeAdapter.create({
+        url: qdrantUrl,
+        apiKey: process.env["QDRANT_API_KEY"],
+        collection,
+        embedProvider,
+        embedApiKey,
+        ollamaUrl:
+          process.env["OLLAMA_EMBED_URL"] ??
+          process.env["OLLAMA_ENDPOINT"] ??
+          "http://localhost:11434",
+      });
+      log(`  KB: Qdrant collection "${collection}" (embed=${embedProvider})`);
+    }
+
     agentHandles[agentName] = createAgent({
       brain,
       memory: memoryAdapter,
@@ -284,6 +339,7 @@ async function runHub(agentFilesRaw: string): Promise<void> {
       controlBus,
       config: agentConfig,
       gates: gatesConfig,
+      knowledge: agentKb,
       equipmentBlock,
     });
     agentDefs[agentName] = def;
@@ -524,6 +580,53 @@ async function runSingleAgent(agentFile: string): Promise<void> {
   const agentConfig = toAgentConfig(def);
   const gatesConfig = toGatesConfig(def);
   const equipmentBlock = renderEquipmentBlock(def.equipment) ?? undefined;
+
+  // ── Knowledge Base (Qdrant, optional) ───────────────────
+  let knowledgeAdapter: KnowledgeAdapter | undefined;
+  const qdrantUrl = process.env["QDRANT_URL"];
+  if (qdrantUrl) {
+    const embedProvider =
+      (process.env["EMBED_PROVIDER"] as
+        | "gemini"
+        | "openai"
+        | "ollama"
+        | undefined) ??
+      (process.env["GEMINI_API_KEY"]
+        ? "gemini"
+        : process.env["OPENAI_API_KEY"]
+          ? "openai"
+          : "ollama");
+
+    const embedApiKey =
+      embedProvider === "gemini"
+        ? process.env["GEMINI_API_KEY"]
+        : embedProvider === "openai"
+          ? process.env["OPENAI_API_KEY"]
+          : undefined;
+
+    const collectionDefault =
+      def.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") + "_kb";
+
+    knowledgeAdapter = QdrantKnowledgeAdapter.create({
+      url: qdrantUrl,
+      apiKey: process.env["QDRANT_API_KEY"],
+      collection: process.env["QDRANT_COLLECTION"] ?? collectionDefault,
+      embedProvider,
+      embedApiKey,
+      embedModel: process.env["EMBED_MODEL"],
+      ollamaUrl:
+        process.env["OLLAMA_EMBED_URL"] ??
+        process.env["OLLAMA_ENDPOINT"] ??
+        "http://localhost:11434",
+    });
+    log(
+      `Knowledge: Qdrant (${qdrantUrl}) — embed=${embedProvider}, collection=${process.env["QDRANT_COLLECTION"] ?? collectionDefault}`,
+    );
+  }
+
   const agent = createAgent({
     brain,
     memory: memoryAdapter,
@@ -535,6 +638,7 @@ async function runSingleAgent(agentFile: string): Promise<void> {
     evolving: evolvingAdapter,
     gates: gatesConfig,
     equipmentBlock,
+    knowledge: knowledgeAdapter,
   });
 
   // Wire WhatsApp inbound events to the agent loop now that agent is created.

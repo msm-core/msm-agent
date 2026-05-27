@@ -994,6 +994,70 @@ legal::sess_abc         ← separate legal session, same suffix
 
 ---
 
+## 18b. Vector Knowledge Base (Qdrant)
+
+Every agent can be equipped with a vector KB backed by Qdrant — the same approach used by Kader's multi-tenant KB system, adapted for per-agent collections with no SDK dependency (pure REST).
+
+**At deploy time — index your documents:**
+
+```typescript
+import { QdrantKnowledgeAdapter } from "msm-agent";
+
+const kb = QdrantKnowledgeAdapter.create({
+  url: process.env.QDRANT_URL, // http://localhost:6333
+  collection: "support_kb",
+  embedProvider: "gemini", // gemini | openai | ollama
+  embedApiKey: process.env.GEMINI_API_KEY,
+});
+
+await kb.indexDocument("doc-001", "Refund Policy", fullPolicyText);
+await kb.indexDocument("doc-002", "Shipping FAQ", shippingText);
+// → chunks content (3000 chars / 500 overlap), embeds, upserts to Qdrant
+```
+
+**At runtime — attach to any agent:**
+
+```typescript
+const agent = createAgent({ brain, memory, tools, ..., knowledge: kb });
+// → on every loop iteration, top-5 KB hits are injected into the brain prompt:
+//   "Knowledge base results:
+//    - [Refund Policy] (relevance 87%) We offer 30-day refunds for..."
+```
+
+**Via CLI (automatic wiring):**
+
+```bash
+QDRANT_URL=http://localhost:6333 \
+QDRANT_COLLECTION=support_kb \
+EMBED_PROVIDER=gemini \
+GEMINI_API_KEY=... \
+AGENT_FILE=./support-agent.md \
+node dist/server/cli.js
+```
+
+**Embedding providers:**
+
+| Provider | Key Required     | Model Default                      |
+| -------- | ---------------- | ---------------------------------- |
+| `gemini` | `GEMINI_API_KEY` | `text-embedding-004` (768-dim)     |
+| `openai` | `OPENAI_API_KEY` | `text-embedding-3-small` (768-dim) |
+| `ollama` | — (local)        | `nomic-embed-text` (768-dim)       |
+
+**Hub mode** — each agent gets its own collection automatically (`<agentName>_kb`):
+
+```bash
+QDRANT_URL=http://localhost:6333 \
+EMBED_PROVIDER=openai \
+OPENAI_API_KEY=... \
+AGENT_FILES=./feasibility.md,./legal.md \
+node dist/server/cli.js
+# → feasibility_kb collection + legal_kb collection
+```
+
+**Smart chunking:** Documents are split at sentence/paragraph boundaries with configurable overlap to prevent context loss at chunk edges. Text-only — chunking logic has no external dependency.
+
+---
+
 ## 19. Ops Dashboard
 
 When `DASHBOARD_PASSWORD` is set, a built-in ops panel is available at `GET /dashboard`. Panels: pending approvals, control bus commands, memory search, session inspector. No external CDN or build step.

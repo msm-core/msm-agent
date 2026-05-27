@@ -13,6 +13,7 @@
 import type { ToolResult, Message, RunState, TaskState } from "./types.js";
 import type { MemoryAdapter, MemoryEntry } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
+import type { KnowledgeAdapter } from "../adapters/knowledge.js";
 
 export interface BrainInput {
   raw: string;
@@ -44,6 +45,12 @@ export interface ContextOptions {
    * Injected into system context as "Past approaches" to guide the brain.
    */
   evolvingHints?: string[];
+  /**
+   * Optional: vector knowledge base adapter.
+   * When provided, the top-K most relevant knowledge chunks are injected
+   * into the system context as [knowledge] entries before the tool catalog.
+   */
+  knowledge?: KnowledgeAdapter;
   /**
    * Optional: custom history compaction.
    * Receives full conversation, returns compacted history array.
@@ -115,7 +122,24 @@ export async function buildContext(
       // search is optional — silently skip on failure
     }
   }
-
+  // ── Knowledge Base (vector search) ────────────────────────────
+  if (options.knowledge) {
+    try {
+      const hits = await options.knowledge.search(text, {
+        topK: 5,
+        minScore: 0.15,
+      });
+      if (hits.length > 0) {
+        const kbLines = hits.map(
+          (h) =>
+            `- [${h.title}] (relevance ${(h.score * 100).toFixed(0)}%) ${h.text.slice(0, 500)}`,
+        );
+        contextParts.push("Knowledge base results:\n" + kbLines.join("\n"));
+      }
+    } catch {
+      // knowledge search is optional — silently skip on failure
+    }
+  }
   // ── Available Tools ─────────────────────────────────────
   const toolDefs = options.tools.list();
   if (toolDefs.length > 0) {

@@ -101,6 +101,21 @@ export interface CreateAgentOptions {
    * Tells the LLM which external systems it can reach and at what access level.
    */
   equipmentBlock?: string;
+  /**
+   * Optional: vector knowledge base adapter.
+   * When set, the agent searches the KB on every iteration and injects the
+   * top-5 most relevant chunks into the brain prompt as [knowledge] context.
+   *
+   * Usage:
+   *   const kb = QdrantKnowledgeAdapter.create({
+   *     url: "http://localhost:6333",
+   *     collection: "support_kb",
+   *     embedProvider: "openai",
+   *     embedApiKey: process.env.OPENAI_API_KEY,
+   *   });
+   *   createAgent({ brain, memory, tools, ..., knowledge: kb });
+   */
+  knowledge?: import("../adapters/knowledge.js").KnowledgeAdapter;
 }
 
 /**
@@ -155,6 +170,7 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     onFatalError: options.onFatalError,
     onInjectionDetected: options.onInjectionDetected,
     equipmentBlock: options.equipmentBlock,
+    knowledge: options.knowledge,
   };
 
   /** Execute an event with pre-hook, evolving layer, and session mutex */
