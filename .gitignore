@@ -6,3 +6,7 @@ dist/
 plan/
 *.code-workspace
 benchmark-results.json
+
+# Internal — not for public repo
+docs/conversations/
+docs/plans/
