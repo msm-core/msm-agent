@@ -131,23 +131,36 @@ console.log(result);
 ### Production agent:
 
 ```typescript
-import { createPipeline } from "msm-ai";
-import { createAgent } from "msm-agent";
-import { RedisMongoMemoryAdapter } from "./adapters/memory";
+import { wrapMSM } from "msm-agent/bridge/msm";
+import {
+  createAgent,
+  MongoMemoryAdapter,
+  BullMQEventAdapter,
+  WhatsAppDeliveryAdapter,
+  RedisControlBus,
+} from "msm-agent";
 import { DomainToolAdapter } from "./adapters/tools";
-import { BullMQEventAdapter } from "./adapters/events";
-import { WhatsAppDeliveryAdapter } from "./adapters/delivery";
-import { RedisControlBusAdapter } from "./adapters/control-bus";
 
-const brain = await createPipeline("./manifests/salon-gulf.yaml");
+// msm-ai brain (optional — any Brain implementation works)
+const brain = wrapMSM(await createPipeline("./manifests/salon-gulf.yaml"));
+
+// Production adapters — all built into msm-agent
+const memory = await MongoMemoryAdapter.connect(process.env.DATABASE_URL!);
+const events = await BullMQEventAdapter.connect({
+  redisUrl: process.env.REDIS_URL!,
+  queueName: "agent-events",
+  concurrency: 5,
+});
+const delivery = new WhatsAppDeliveryAdapter(whatsappConfig);
+const controlBus = await RedisControlBus.connect(process.env.REDIS_URL!);
 
 const agent = createAgent({
   brain,
-  memory: new RedisMongoMemoryAdapter({ redis: REDIS_URL, mongo: MONGO_URL }),
+  memory,
   tools: new DomainToolAdapter(toolRegistry),
-  events: new BullMQEventAdapter({ redis: REDIS_URL, queues: ["agent-tasks"] }),
-  delivery: new WhatsAppDeliveryAdapter(whatsappConfig),
-  controlBus: new RedisControlBusAdapter(REDIS_URL),
+  events,
+  delivery,
+  controlBus,
   tenantId: "tenant-123",
 
   config: {
@@ -1122,23 +1135,29 @@ export class MongoRedisMemoryAdapter implements MemoryAdapter {
 Complete WhatsApp booking agent:
 
 ```typescript
-import { createPipeline } from "msm-ai";
-import { createAgent, FlushGate } from "msm-agent";
-import { MongoRedisMemoryAdapter } from "./adapters/memory";
+import { wrapMSM } from "msm-agent/bridge/msm";
+import {
+  createAgent,
+  FlushGate,
+  MongoMemoryAdapter,
+  BullMQEventAdapter,
+  WhatsAppDeliveryAdapter,
+  RedisControlBus,
+} from "msm-agent";
 import { BookingToolAdapter } from "./adapters/tools";
-import { BullMQEventAdapter } from "./adapters/events";
-import { WhatsAppDeliveryAdapter } from "./adapters/delivery";
-import { RedisControlBusAdapter } from "./adapters/control-bus";
 
 // ─── Brain ────────────────
-const brain = await createPipeline("./manifests/salon-gulf.yaml");
+const brain = wrapMSM(await createPipeline("./manifests/salon-gulf.yaml"));
 
-// ─── Adapters ─────────────
-const memory = new MongoRedisMemoryAdapter(mongo, redis);
+// ─── Adapters (built into msm-agent) ──────────────
+const memory = await MongoMemoryAdapter.connect(process.env.DATABASE_URL!);
+const events = await BullMQEventAdapter.connect({
+  redisUrl: process.env.REDIS_URL!,
+  concurrency: 5,
+});
+const delivery = new WhatsAppDeliveryAdapter(whatsappConfig);
+const controlBus = await RedisControlBus.connect(process.env.REDIS_URL!);
 const tools = new BookingToolAdapter(erpClient, knowledgeBase);
-const events = new BullMQEventAdapter(redis, { concurrency: 5 });
-const delivery = new WhatsAppDeliveryAdapter(whatsappClient);
-const controlBus = new RedisControlBusAdapter(redis);
 
 // ─── Observability ────────
 const auditGate = new FlushGate<AuditEntry>({

@@ -36,7 +36,9 @@ Short answer:
 | Channel pre-processing gates                 | opt-out, ack suppression, FAQ auto-answer                    | Not in package (by design)                      | project channels layer      |
 | Employee routing and delegation policy       | sticky/intent/scored routing                                 | Not in package (by design)                      | project routing layer       |
 | Multi-layer memory system                    | working/episodic/semantic/procedural/reflection              | Not in package (by design)                      | project memory layer        |
-| Observability and quality loop               | traces, trust scorecard, quality scorer, self-improving loop | Hooks only                                      | project observability layer |
+| Observability and quality loop               | traces, trust scorecard, quality scorer, self-improving loop | Implemented: `scoreOutcome`, `FLAG_STRATEGIES`, evolving layer (`preReason`, `postOutcome`, `refreshStrategies`, `consolidateStrategies`). `onIteration`/`onGuard` telemetry hooks available. | msm-agent + project observability layer |
+| Arabic-native routing                        | Arabic-capable model routing for Arabic input                | Implemented: `detectLanguage`, `RoutingBrain`, `language: "arabic"` in schema | msm-agent               |
+| Sovereign deployment                         | Air-gapped local-only mode                                   | Implemented: `SOVEREIGN=true` env flag, startup validation, `/health` sovereign status | msm-agent           |
 | LLM provider failover and model routing      | multi-provider resilient router                              | Not in package (by design)                      | MSM brain layer             |
 
 ## Ownership Contract
@@ -123,12 +125,14 @@ my-project/
 ## Example Boundary in Code
 
 ```ts
-import { createAgent } from "msm-agent";
-import { PostgresMemoryAdapter } from "./adapters/memory.adapter";
+import {
+  createAgent,
+  PostgresMemoryAdapter,
+  BullMQEventAdapter,
+  WhatsAppDeliveryAdapter,
+  RedisControlBus,
+} from "msm-agent";
 import { DomainToolAdapter } from "./adapters/tools.adapter";
-import { QueueEventAdapter } from "./adapters/events.adapter";
-import { WhatsAppDeliveryAdapter } from "./adapters/delivery.adapter";
-import { RedisControlBusAdapter } from "./adapters/control-bus.adapter";
 
 const agent = createAgent({
   brain,
