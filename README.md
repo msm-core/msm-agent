@@ -182,13 +182,14 @@ console.log(outcome.type); // "response" | "clarification" | "escalated" | ...
 
 ### With MSM Brain
 
-If you use [msm-ai](https://github.com/msm-core/msm-ai) as your brain (the 5-layer prompt pipeline):
+If you use [msm-ai](https://github.com/msm-core/msm-ai) as your brain (the 6-layer prompt pipeline):
 
 ```typescript
 import { wrapMSM } from "msm-agent/bridge/msm";
-import { Pipeline } from "msm-ai";
+import { createPipeline } from "msm-ai";
 
-const brain = wrapMSM(new Pipeline("support", layers));
+const pipeline = await createPipeline("./support.yaml");
+const brain = wrapMSM(pipeline);
 const agent = createAgent({ brain, ...adapters });
 ```
 
@@ -377,7 +378,7 @@ const brain = buildBrain(def); // reads OPENAI_API_KEY / ANTHROPIC_API_KEY / OLL
 | Ollama       | `ollama`          | `OLLAMA_ENDPOINT`   |
 | Azure OpenAI | `openai`          | `OPENAI_BASE_URL`   |
 
-For the [msm-ai](https://github.com/msm-core/msm-ai) 5-layer prompt pipeline, wrap it with `wrapMSM()` from `msm-agent/bridge/msm`. Any object with a `run(input): Promise<BrainPayload>` method also works as a custom brain.
+For the [msm-ai](https://github.com/msm-core/msm-ai) 6-layer prompt pipeline, wrap it with `wrapMSM()` from `msm-agent/bridge/msm`. Any object with a `run(input): Promise<BrainPayload>` method also works as a custom brain.
 
 → **Full examples and custom brain spec in [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)**
 
@@ -470,7 +471,7 @@ Once registered, any agent definition that lists `type: shopify` in its equipmen
 import { EquipmentToolAdapter, loadAgent } from "msm-agent";
 
 const def = await loadAgent("./agent.md");
-const tools = await EquipmentToolAdapter.create(def.equipment, baseToolAdapter);
+const tools = EquipmentToolAdapter.create(def.equipment, baseToolAdapter);
 const agent = createAgent({ tools, ...rest });
 ```
 
