@@ -909,20 +909,62 @@ await mcp.stop();
 The CLI boots an HTTP server from any `.md` or `.it` definition file. Adapters wire automatically from environment variables — no code changes needed.
 
 ```bash
-# Minimal (in-memory, local dev)
+# Single agent (in-memory, local dev)
 AGENT_FILE=./agent.md OPENAI_API_KEY=sk-... node dist/server/cli.js
 
-# Full production
+# Single agent (full production)
 AGENT_FILE=./agent.md DATABASE_URL=postgresql://... REDIS_URL=redis://... node dist/server/cli.js
+
+# Multi-agent hub — comma-separated definition files
+AGENT_FILES=./feasibility.md,./legal.md,./hr.md \
+  DATABASE_URL=mongodb://... REDIS_URL=redis://... node dist/server/cli.js
 ```
 
 **Progression:** In-memory → SQLite → Postgres/Mongo → add Redis + BullMQ + `EVOLVING_MODE=shadow`.
 
 → **Docker Compose, all environment variables, and deployment guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
+### Multi-Agent Hub (v0.3.0)
+
+Run multiple agents in a single process with shared infrastructure (MongoDB, Redis, Qdrant, BullMQ).
+Each agent routes by URL — no extra service, no duplicate connections.
+
+```typescript
+import { createAgent, createAgentHub } from "msm-agent";
+import { createAgentServer } from "msm-agent/server";
+
+// Shared adapters — instantiate once
+const memory = await MongoMemoryAdapter.connect(process.env.DATABASE_URL);
+const controlBus = await RedisControlBus.connect(process.env.REDIS_URL);
+
+const hub = createAgentHub({
+  feasibility: createAgent({ brain: feasibilityBrain, memory, tools: feasibilityTools, ... }),
+  legal:       createAgent({ brain: legalBrain,       memory, tools: legalTools,       ... }),
+  hr:          createAgent({ brain: hrBrain,          memory, tools: hrTools,          ... }),
+});
+
+// Hub-aware server — routes /agents/:name/* automatically
+const server = createAgentServer(hub, { feasibility: feasDef, legal: legalDef, hr: hrDef }, {
+  port: 3000, memory, controlBus,
+});
+await server.start();
+// → POST /agents/feasibility/event
+// → POST /agents/legal/event
+// → POST /agents/hr/event
+```
+
+**Session namespacing:** Prefix session IDs with the agent name to prevent memory bleed when agents share a `MemoryAdapter`:
+
+```
+feasibility::sess_abc   ← feasibility agent session
+legal::sess_abc         ← separate legal session, same suffix
+```
+
 ---
 
 ## 18. HTTP API Reference
+
+**Single-agent mode:**
 
 | Endpoint            | Method | Description                                  |
 | ------------------- | ------ | -------------------------------------------- |
@@ -935,6 +977,18 @@ AGENT_FILE=./agent.md DATABASE_URL=postgresql://... REDIS_URL=redis://... node d
 | `/jobs/*`           | —      | Jobs CRUD (`ENABLE_JOBS=true`)               |
 | `/admin/*`          | —      | Control bus + memory search (password-gated) |
 | `/dashboard`        | GET    | Ops panel UI (`DASHBOARD_PASSWORD` required) |
+
+**Hub mode (v0.3.0) — URL-based routing:**
+
+| Endpoint                     | Method | Description                           |
+| ---------------------------- | ------ | ------------------------------------- |
+| `/health`                    | GET    | Status of all registered agents       |
+| `/agents`                    | GET    | List registered agent names           |
+| `/agents/:name/health`       | GET    | Individual agent identity             |
+| `/agents/:name/event`        | POST   | Route event to named agent (stateful) |
+| `/agents/:name/chat`         | POST   | Stateless single-turn for named agent |
+| `/agents/:name/session/:id`  | GET    | Session state for named agent         |
+| `/agents/:name/task/approve` | POST   | Approval callback for named agent     |
 
 → **Full request/response examples in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#2-http-api-reference)**
 

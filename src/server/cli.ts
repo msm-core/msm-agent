@@ -30,7 +30,11 @@
  *
  * ── HTTP Server ─────────────────────────────────────────────────────────────
  *
- *   AGENT_FILE        Path to agent definition (.md or .it)      [required]
+ *   AGENT_FILE        Path to agent definition (.md or .it)      [required*]
+ *   AGENT_FILES       Comma-separated paths for multi-agent hub   [required*]
+ *                       AGENT_FILES=feasibility.md,legal.md,hr.md
+ *                       Each agent name is taken from the definition file.
+ *                       * Set exactly one of AGENT_FILE or AGENT_FILES.
  *   PORT              HTTP server port                            [default: 3000]
  *   HOST              HTTP server host                            [default: 0.0.0.0]
  *
@@ -63,6 +67,8 @@ import { InMemoryJobAdapter } from "../adapters/jobs.js";
 import { loadAgent } from "../definition/index.js";
 import { buildBrain } from "../brains/factory.js";
 import { createAgent } from "../core/agent.js";
+import { createAgentHub } from "../core/hub.js";
+import type { AgentHandle } from "../core/types.js";
 import {
   toAgentConfig,
   toGatesConfig,
@@ -85,18 +91,250 @@ function log(msg: string): void {
 // ─── Main ────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // ── Load agent definition ────────────────────────────────
+  // ── Detect mode: hub vs single agent ────────────────────
   const agentFile = process.env["AGENT_FILE"];
-  if (!agentFile) {
+  const agentFilesRaw = process.env["AGENT_FILES"];
+
+  if (!agentFile && !agentFilesRaw) {
     console.error(
-      "[msm-agent] Error: AGENT_FILE environment variable is required",
+      "[msm-agent] Error: AGENT_FILE or AGENT_FILES environment variable is required",
     );
     console.error(
-      "[msm-agent] Example: AGENT_FILE=./support-agent.md node dist/server/cli.js",
+      "[msm-agent] Single:  AGENT_FILE=./support-agent.md node dist/server/cli.js",
+    );
+    console.error(
+      "[msm-agent] Hub:     AGENT_FILES=./feasibility.md,./legal.md node dist/server/cli.js",
     );
     process.exit(1);
   }
 
+  if (agentFile && agentFilesRaw) {
+    console.error(
+      "[msm-agent] Error: set either AGENT_FILE or AGENT_FILES — not both",
+    );
+    process.exit(1);
+  }
+
+  // ── Hub mode ─────────────────────────────────────────────
+  if (agentFilesRaw) {
+    await runHub(agentFilesRaw);
+    return;
+  }
+
+  // ── Single-agent mode (existing behavior) ────────────────
+  await runSingleAgent(agentFile!);
+}
+
+async function runHub(agentFilesRaw: string): Promise<void> {
+  const agentFiles = agentFilesRaw
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (agentFiles.length === 0) {
+    console.error("[msm-agent] Error: AGENT_FILES is empty");
+    process.exit(1);
+  }
+
+  log(`Hub mode — loading ${agentFiles.length} agent(s)`);
+
+  // Sovereign check
+  const sovereign = process.env["SOVEREIGN"] === "true";
+  if (sovereign) {
+    if (process.env["OPENAI_API_KEY"] || process.env["ANTHROPIC_API_KEY"]) {
+      console.error(
+        "[msm-agent] SOVEREIGN=true but cloud credentials are set. " +
+          "Remove OPENAI_API_KEY / ANTHROPIC_API_KEY to prevent data leaving this infrastructure.",
+      );
+      process.exit(1);
+    }
+    if (!process.env["DATABASE_URL"] && !process.env["MEMORY_PATH"]) {
+      process.env["MEMORY_PATH"] = "/data/agent.db";
+    }
+    log(
+      "Sovereign mode: all processing is local — no cloud credentials loaded.",
+    );
+  }
+
+  // ── Shared memory adapter ────────────────────────────────
+  const databaseUrl = process.env["DATABASE_URL"];
+  const memoryPath = process.env["MEMORY_PATH"];
+  let memoryAdapter: MemoryAdapter;
+  let sqliteAdapter: SQLiteMemoryAdapter | null = null;
+
+  if (
+    databaseUrl?.startsWith("postgresql://") ||
+    databaseUrl?.startsWith("postgres://")
+  ) {
+    log("Memory: PostgreSQL (shared)");
+    const { PostgresMemoryAdapter } =
+      await import("../adapters/postgres-memory.js");
+    memoryAdapter = await PostgresMemoryAdapter.connect(databaseUrl);
+  } else if (
+    databaseUrl?.startsWith("mongodb://") ||
+    databaseUrl?.startsWith("mongodb+srv://")
+  ) {
+    log("Memory: MongoDB (shared)");
+    const { MongoMemoryAdapter } = await import("../adapters/mongo-memory.js");
+    memoryAdapter = await MongoMemoryAdapter.connect(databaseUrl);
+  } else if (memoryPath) {
+    log(`Memory: SQLite (${memoryPath}) — dev/single-instance only (shared)`);
+    sqliteAdapter = new SQLiteMemoryAdapter(memoryPath);
+    memoryAdapter = sqliteAdapter;
+  } else {
+    log(
+      "Memory: in-memory (state lost on restart — set DATABASE_URL for persistence)",
+    );
+    memoryAdapter = new InMemoryAdapter();
+  }
+
+  const neo4jUrl = process.env["NEO4J_URL"];
+  if (neo4jUrl) {
+    const password = process.env["NEO4J_PASSWORD"];
+    if (!password)
+      throw new Error("NEO4J_PASSWORD is required when NEO4J_URL is set");
+    log(`Memory: Neo4j graph layer (${neo4jUrl}) wrapping primary store`);
+    const { Neo4jMemoryAdapter } = await import("../adapters/neo4j-memory.js");
+    memoryAdapter = await Neo4jMemoryAdapter.connect({
+      url: neo4jUrl,
+      user: process.env["NEO4J_USER"] ?? "neo4j",
+      password,
+      primary: memoryAdapter,
+    });
+  }
+
+  // ── Shared control bus ───────────────────────────────────
+  const redisUrl = process.env["REDIS_URL"];
+  let controlBus: ControlBusAdapter;
+  if (redisUrl) {
+    log(`Control bus: Redis (${redisUrl}) (shared)`);
+    const { RedisControlBus } =
+      await import("../adapters/redis-control-bus.js");
+    controlBus = await RedisControlBus.connect(redisUrl);
+  } else {
+    log("Control bus: in-memory (set REDIS_URL for cross-instance signals)");
+    controlBus = new InMemoryControlBus();
+  }
+
+  const memoryContext = sqliteAdapter
+    ? (q: string) =>
+        sqliteAdapter!.searchSync(q, 5).map((e) => `[memory] ${e.content}`)
+    : undefined;
+
+  // ── Load definitions and build per-agent resources ───────
+  const agentHandles: Record<string, AgentHandle> = {};
+  const agentDefs: Record<
+    string,
+    import("../definition/index.js").AgentDefinition
+  > = {};
+
+  for (const filePath of agentFiles) {
+    log(`Loading: ${filePath}`);
+    let def = await loadAgent(filePath);
+
+    if (
+      sovereign &&
+      (!def.brain?.provider ||
+        def.brain.provider === "openai" ||
+        def.brain.provider === "anthropic")
+    ) {
+      def = {
+        ...def,
+        brain: {
+          ...def.brain,
+          provider: "ollama",
+          model: def.brain?.model ?? "phi4-mini",
+        },
+      };
+    }
+
+    // Derive a safe agent name from the definition name (lowercase, hyphenated)
+    const agentName = def.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    log(
+      `Agent "${agentName}" (${def.brain.provider}/${def.brain.model ?? "default"})`,
+    );
+
+    const brain = buildBrain(def, { memoryContext });
+
+    let tools: ToolAdapter = new MockToolAdapter();
+    if (def.equipment) {
+      const { EquipmentToolAdapter } = await import("../adapters/equipment.js");
+      tools = EquipmentToolAdapter.create(def.equipment, tools);
+    }
+    if (def.skills.length > 0) {
+      const { SkillToolAdapter } = await import("../adapters/skills.js");
+      tools = SkillToolAdapter.create(def.skills, {}, tools);
+      log(`  Skills: ${def.skills.join(", ")}`);
+    }
+
+    const agentConfig = toAgentConfig(def);
+    const gatesConfig = toGatesConfig(def);
+    const equipmentBlock = renderEquipmentBlock(def.equipment) ?? undefined;
+
+    agentHandles[agentName] = createAgent({
+      brain,
+      memory: memoryAdapter,
+      tools,
+      events: new ManualEventAdapter(),
+      delivery: new ConsoleDeliveryAdapter(),
+      controlBus,
+      config: agentConfig,
+      gates: gatesConfig,
+      equipmentBlock,
+    });
+    agentDefs[agentName] = def;
+  }
+
+  const hub = createAgentHub(agentHandles);
+
+  // ── Jobs ─────────────────────────────────────────────────
+  let jobAdapter: JobAdapter | undefined;
+  if (process.env["ENABLE_JOBS"] === "true") {
+    if (memoryPath) {
+      log(`Jobs: SQLite (${memoryPath})`);
+      const { SQLiteJobAdapter } = await import("../adapters/sqlite-jobs.js");
+      jobAdapter = SQLiteJobAdapter.connect(memoryPath);
+    } else {
+      log("Jobs: in-memory");
+      jobAdapter = new InMemoryJobAdapter();
+    }
+  }
+
+  const port = parseInt(process.env["PORT"] ?? "3000", 10);
+  const hostAddr = process.env["HOST"] ?? "0.0.0.0";
+  const dashboardPassword = process.env["DASHBOARD_PASSWORD"];
+
+  const server = createAgentServer(hub, agentDefs, {
+    port,
+    host: hostAddr,
+    memory: memoryAdapter,
+    controlBus,
+    dashboardPassword,
+    jobs: jobAdapter,
+    sovereign,
+  });
+  await server.start();
+
+  // ── Graceful shutdown ────────────────────────────────────
+  const shutdown = async (signal: string): Promise<void> => {
+    log(`Received ${signal}, shutting down…`);
+    await server.stop();
+    for (const adapter of [memoryAdapter, controlBus, jobAdapter]) {
+      const a = adapter as { close?: () => Promise<void> };
+      await a.close?.();
+    }
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+}
+
+async function runSingleAgent(agentFile: string): Promise<void> {
   log(`Loading agent definition: ${agentFile}`);
   let def = await loadAgent(agentFile);
 

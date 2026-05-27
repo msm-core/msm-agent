@@ -13,6 +13,9 @@
 export { createAgent } from "./core/agent.js";
 export type { CreateAgentOptions } from "./core/agent.js";
 
+export { createAgentHub, isAgentHub } from "./core/hub.js";
+export type { AgentHubHandle } from "./core/hub.js";
+
 export type {
   AgentConfig,
   AgentEvent,

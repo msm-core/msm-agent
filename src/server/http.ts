@@ -35,6 +35,8 @@ import type {
   LoopOutcome,
   ControlCommand,
 } from "../core/types.js";
+import type { AgentHubHandle } from "../core/hub.js";
+import { isAgentHub } from "../core/hub.js";
 import type { AgentDefinition } from "../definition/index.js";
 import type { MemoryAdapter } from "../adapters/memory.js";
 import type { ControlBusAdapter } from "../adapters/control-bus.js";
@@ -891,11 +893,47 @@ async function handleCancelJob(
   json(res, 200, { jobId, status: "cancelled" });
 }
 
+// ─── Hub route handlers ──────────────────────────────────────
+
+/**
+ * GET /health (hub mode) — returns status of all registered agents.
+ */
+function handleHubHealth(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  hub: AgentHubHandle,
+  defs: Record<string, AgentDefinition>,
+  sovereign?: boolean,
+): void {
+  const agents: Record<string, unknown> = {};
+  for (const name of hub.agentNames()) {
+    const def = defs[name];
+    agents[name] = def
+      ? {
+          status: "ok",
+          ready: true,
+          name: def.name,
+          domain: def.domain,
+          provider: def.brain.provider,
+          brain: def.brain.model ?? def.brain.provider,
+          capabilities: def.capabilities,
+        }
+      : { status: "ok", ready: true };
+  }
+  json(res, 200, {
+    status: "ok",
+    ready: true,
+    agentCount: hub.agentNames().length,
+    agents,
+    ...(sovereign ? { sovereign: true } : {}),
+  });
+}
+
 // ─── Server factory ──────────────────────────────────────────
 
 export function createAgentServer(
-  agent: AgentHandle,
-  def: AgentDefinition,
+  agent: AgentHandle | AgentHubHandle,
+  def: AgentDefinition | Record<string, AgentDefinition>,
   opts: ServerOptions = {},
 ): { start: () => Promise<void>; stop: () => Promise<void> } {
   const port = opts.port ?? 3000;
@@ -910,21 +948,104 @@ export function createAgentServer(
   } = opts;
   const controlState = emptyControlState();
 
+  // Detect hub vs single-agent mode.
+  const hub = isAgentHub(agent) ? agent : null;
+  const singleAgent = hub ? null : (agent as AgentHandle);
+  const singleDef = hub ? null : (def as AgentDefinition);
+  const hubDefs = hub ? (def as Record<string, AgentDefinition>) : {};
+
   const server = createServer((req, res) => {
     // Strip query string for routing; preserve full URL for admin/memory
     const url = req.url?.split("?")[0] ?? "/";
 
     // GET /health
     if (url === "/health" && req.method === "GET") {
-      handleHealth(req, res, def, sovereign).catch((err) => {
-        json(res, 500, { error: String(err) });
+      if (hub) {
+        handleHubHealth(req, res, hub, hubDefs, sovereign);
+      } else {
+        handleHealth(req, res, singleDef!, sovereign).catch((err) => {
+          json(res, 500, { error: String(err) });
+        });
+      }
+      return;
+    }
+
+    // ── Hub routes: /agents/:name/* ───────────────────────────
+    const agentRouteMatch = url.match(/^\/agents\/([^/]+)(\/.*)?$/);
+    if (agentRouteMatch && hub) {
+      const agentName = decodeURIComponent(agentRouteMatch[1]!);
+      const subPath = agentRouteMatch[2] ?? "/";
+      const agentHandle = hub.agents[agentName];
+
+      if (!agentHandle) {
+        json(res, 404, {
+          error: `No agent registered as "${agentName}". Available: ${hub.agentNames().join(", ")}`,
+        });
+        return;
+      }
+
+      // GET /agents/:name/health
+      if (subPath === "/health" && req.method === "GET") {
+        const agentDef = hubDefs[agentName];
+        if (agentDef) {
+          handleHealth(req, res, agentDef, sovereign).catch((err) => {
+            json(res, 500, { error: String(err) });
+          });
+        } else {
+          json(res, 200, { status: "ok", ready: true, name: agentName });
+        }
+        return;
+      }
+
+      // POST /agents/:name/event
+      if (subPath === "/event") {
+        handleEvent(req, res, agentHandle, jobs).catch((err) => {
+          json(res, 500, { error: String(err) });
+        });
+        return;
+      }
+
+      // POST /agents/:name/chat
+      if (subPath === "/chat") {
+        handleChat(req, res, agentHandle).catch((err) => {
+          json(res, 500, { error: String(err) });
+        });
+        return;
+      }
+
+      // GET /agents/:name/session/:id
+      const agentSessionMatch = subPath.match(/^\/session\/([^/]+)$/);
+      if (agentSessionMatch && req.method === "GET") {
+        const sessionId = decodeURIComponent(agentSessionMatch[1]!);
+        handleSession(req, res, sessionId, memory).catch((err) => {
+          json(res, 500, { error: String(err) });
+        });
+        return;
+      }
+
+      // POST /agents/:name/task/approve
+      if (subPath === "/task/approve") {
+        handleApprove(req, res, agentHandle).catch((err) => {
+          json(res, 500, { error: String(err) });
+        });
+        return;
+      }
+
+      json(res, 404, {
+        error: `No route for ${req.method} /agents/${agentName}${subPath}`,
       });
       return;
     }
 
+    // ── Single-agent routes (unchanged) ──────────────────────
+
     // POST /v1/event — generic event ingress
     if (url === "/v1/event") {
-      handleEvent(req, res, agent, jobs).catch((err) => {
+      if (!singleAgent) {
+        json(res, 404, { error: "Use /agents/:name/event in hub mode" });
+        return;
+      }
+      handleEvent(req, res, singleAgent, jobs).catch((err) => {
         json(res, 500, { error: String(err) });
       });
       return;
@@ -932,7 +1053,11 @@ export function createAgentServer(
 
     // POST /chat — stateless single-turn
     if (url === "/chat") {
-      handleChat(req, res, agent).catch((err) => {
+      if (!singleAgent) {
+        json(res, 404, { error: "Use /agents/:name/chat in hub mode" });
+        return;
+      }
+      handleChat(req, res, singleAgent).catch((err) => {
         json(res, 500, { error: String(err) });
       });
       return;
@@ -950,7 +1075,11 @@ export function createAgentServer(
 
     // POST /task/approve — approval callback
     if (url === "/task/approve") {
-      handleApprove(req, res, agent).catch((err) => {
+      if (!singleAgent) {
+        json(res, 404, { error: "Use /agents/:name/task/approve in hub mode" });
+        return;
+      }
+      handleApprove(req, res, singleAgent).catch((err) => {
         json(res, 500, { error: String(err) });
       });
       return;
@@ -964,16 +1093,28 @@ export function createAgentServer(
         json(res, 404, { error: "Not found" });
         return;
       }
-      handleDashboard(req, res, def);
+      const dashboardName =
+        singleDef?.name ?? `Hub (${hub?.agentNames().join(", ")})`;
+      handleDashboard(req, res, { name: dashboardName } as AgentDefinition);
       return;
     }
 
     // GET /admin/state — health + control state (auth required)
     if (url === "/admin/state" && req.method === "GET") {
       if (!requireAuth(req, res, dashboardPassword)) return;
-      handleAdminState(req, res, def, memory, controlState).catch((err) => {
-        json(res, 500, { error: String(err) });
-      });
+      const stateDef =
+        singleDef ??
+        ({
+          name: `Hub (${hub?.agentNames().join(", ")})`,
+          domain: "multi-agent",
+          brain: { provider: "mixed" },
+          capabilities: hub?.agentNames() ?? [],
+        } as unknown as AgentDefinition);
+      handleAdminState(req, res, stateDef, memory, controlState).catch(
+        (err) => {
+          json(res, 500, { error: String(err) });
+        },
+      );
       return;
     }
 
@@ -1057,9 +1198,20 @@ export function createAgentServer(
     start(): Promise<void> {
       return new Promise((resolve) => {
         server.listen(port, host, () => {
-          console.log(
-            `[msm-agent] ${def.name} running on http://${host}:${port}`,
-          );
+          if (hub) {
+            console.log(
+              `[msm-agent] Hub running on http://${host}:${port} — agents: ${hub.agentNames().join(", ")}`,
+            );
+            for (const name of hub.agentNames()) {
+              console.log(
+                `[msm-agent]   POST http://${host}:${port}/agents/${name}/event`,
+              );
+            }
+          } else {
+            console.log(
+              `[msm-agent] ${singleDef!.name} running on http://${host}:${port}`,
+            );
+          }
           console.log(`[msm-agent] Health: http://${host}:${port}/health`);
           if (dashboardPassword) {
             console.log(
