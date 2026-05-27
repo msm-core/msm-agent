@@ -34,11 +34,11 @@ Done.
 14. [Deeper Evolving Layer — Signal Decay & Contradiction Detection](#14-deeper-evolving-layer--signal-decay--contradiction-detection)
 15. [Jobs and Missions](#15-jobs-and-missions)
 16. [MCP Server](#16-mcp-server)
-17. [Running as a Microservice](#17-running-as-a-microservice)
-18. [HTTP API Reference](#18-http-api-reference)
-19. [Ops Dashboard](#19-ops-dashboard)
-20. [Configuration Reference](#20-configuration-reference)
-21. [Guard System](#21-guard-system)
+17. [Running as a Microservice](#17-running-as-a-microservice) — [full guide →](docs/DEPLOYMENT.md)
+18. [HTTP API Reference](#18-http-api-reference) — [full reference →](docs/DEPLOYMENT.md#2-http-api-reference)
+19. [Ops Dashboard](#19-ops-dashboard) — [details →](docs/DEPLOYMENT.md#3-ops-dashboard)
+20. [Configuration Reference](#20-configuration-reference) — [full options →](docs/DEPLOYMENT.md#4-configuration-reference)
+21. [Guard System](#21-guard-system) — [reference →](docs/DEPLOYMENT.md#5-guard-system)
 22. [Testing](#22-testing)
 23. [License](#23-license)
 
@@ -344,321 +344,63 @@ If the loop exhausts `maxIterations` without a terminal action, the runtime forc
 
 ## 5. The 5 Adapter Interfaces
 
-The runtime provides the loop. You provide 5 adapters connecting it to your infrastructure. Each has a dummy implementation for local development and testing.
+The runtime provides the loop. You provide 5 adapters that connect it to your infrastructure.
 
-### MemoryAdapter — how the agent remembers
+| Adapter           | Purpose                                              | Built-in options                         |
+| ----------------- | ---------------------------------------------------- | ---------------------------------------- |
+| `MemoryAdapter`   | Conversation history, task state, semantic search    | `InMemoryAdapter`, `SQLiteMemoryAdapter`, `PostgresMemoryAdapter`, `MongoMemoryAdapter`, `Neo4jMemoryAdapter` |
+| `ToolAdapter`     | Execute domain actions; mark tools `requiresApproval` to pause for human sign-off | Your implementation or `EquipmentToolAdapter`, `SkillsToolAdapter` |
+| `EventAdapter`    | Receive work from webhooks, queues, or manual calls  | `BullMQEventAdapter` (durable), simple HTTP handler |
+| `DeliveryAdapter` | Send responses to the user's channel                 | `WhatsAppDeliveryAdapter`, your implementation |
+| `ControlBusAdapter` | Kill tasks, pause tenants, disable tools at runtime | `RedisControlBus` (production), `InMemoryControlBus` (dev) |
 
-Handles conversation history, task state, and semantic memory search.
+Each adapter has a dummy implementation for tests (`DummyMemoryAdapter`, etc.) — no external services required.
 
-```typescript
-import type { MemoryAdapter, Message, TaskState, MemoryEntry } from "msm-agent";
-
-class MyMemoryAdapter implements MemoryAdapter {
-  // Conversation history
-  async getConversation(sessionId: string): Promise<Message[]> { ... }
-  async saveMessage(sessionId: string, message: Message): Promise<void> { ... }
-
-  // Task state (for multi-step tasks)
-  async getActiveTask(sessionId: string): Promise<TaskState | null> { ... }
-  async saveTask(task: TaskState): Promise<void> { ... }
-  async updateTaskStatus(taskId: string, status: TaskStatus): Promise<void> { ... }
-
-  // Semantic memory (optional — enables evolving layer)
-  async search(query: string, limit: number): Promise<MemoryEntry[]> { ... }
-  async store(entry: MemoryEntry): Promise<void> { ... }
-}
-```
-
-When `search()` is implemented, the context builder queries it automatically on every iteration and injects matches into the brain's input. This is the foundation the self-improving layer (Phase 14) builds on — strategy notes and past approaches are stored and retrieved the same way.
-
-### ToolAdapter — how the agent executes actions
-
-```typescript
-import type { ToolAdapter, ToolDefinition, ToolResult } from "msm-agent";
-
-class MyToolAdapter implements ToolAdapter {
-  list(): ToolDefinition[] {
-    return [
-      {
-        name: "get_order_status",
-        description: "Look up order status by order ID",
-        parameters: { orderId: { type: "string", required: true } },
-      },
-      {
-        name: "cancel_order",
-        description: "Cancel an order",
-        parameters: { orderId: { type: "string", required: true } },
-        destructive: true,
-        requiresApproval: true, // pauses loop, sends to dashboard
-      },
-    ];
-  }
-
-  async execute(
-    name: string,
-    params: Record<string, unknown>,
-  ): Promise<ToolResult> {
-    switch (name) {
-      case "get_order_status":
-        const order = await ordersDb.find(params.orderId as string);
-        return { tool: name, status: "ok", result: { order } };
-      default:
-        return {
-          tool: name,
-          status: "failed",
-          result: { error: "Unknown tool" },
-        };
-    }
-  }
-}
-```
-
-For external APIs and CRM systems, use the Equipment adapter instead of implementing `ToolAdapter` directly — see [Equipment](#8-equipment--connected-external-systems).
-
-### EventAdapter — how the agent receives work
-
-```typescript
-import type { EventAdapter, AgentEvent } from "msm-agent";
-
-class WebhookEventAdapter implements EventAdapter {
-  private handler: ((event: AgentEvent) => Promise<void>) | null = null;
-
-  onEvent(handler: (event: AgentEvent) => Promise<void>) {
-    this.handler = handler;
-  }
-
-  // Call this.handler(event) from your webhook route
-  async start() {
-    /* no-op for simple HTTP */
-  }
-  async stop() {
-    /* no-op */
-  }
-}
-```
-
-For durable queues with retry semantics, use `BullMQEventAdapter` — see [Production Adapters](#7-production-adapters).
-
-### DeliveryAdapter — how the agent delivers responses
-
-```typescript
-import type { DeliveryAdapter, LoopOutcome } from "msm-agent";
-
-class MyDeliveryAdapter implements DeliveryAdapter {
-  async send(sessionId: string, outcome: LoopOutcome): Promise<void> {
-    switch (outcome.type) {
-      case "response":
-        await channel.sendText(sessionId, outcome.text);
-        break;
-      case "clarification":
-        await channel.sendText(sessionId, outcome.question);
-        break;
-      case "escalated":
-        await humanQueue.enqueue(sessionId);
-        break;
-    }
-  }
-
-  async sendTyping(sessionId: string): Promise<void> {
-    await channel.sendTyping(sessionId);
-  }
-}
-```
-
-For WhatsApp, use `WhatsAppDeliveryAdapter` — see [Production Adapters](#7-production-adapters).
-
-### ControlBusAdapter — runtime operability (optional)
-
-Lets you kill tasks, pause tenants, and disable tools at runtime — checked every loop iteration.
-
-```typescript
-import type { ControlBusAdapter } from "msm-agent";
-
-// Use the built-in Redis adapter in production:
-import { RedisControlBus } from "msm-agent";
-const controlBus = await RedisControlBus.connect("redis://localhost:6379");
-
-// Commands:
-await controlBus.execute({
-  type: "kill_task",
-  taskId: "t-1",
-  reason: "user cancelled",
-});
-await controlBus.execute({
-  type: "pause_tenant",
-  tenantId: "acme",
-  reason: "billing issue",
-});
-await controlBus.execute({
-  type: "disable_tool",
-  toolName: "send_email",
-  reason: "smtp down",
-});
-await controlBus.execute({ type: "resume_tenant", tenantId: "acme" });
-await controlBus.execute({ type: "enable_tool", toolName: "send_email" });
-```
+→ **Full interface specs, code examples, and production wiring in [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)**
 
 ---
 
 ## 6. Brain Integration
 
-### Built-in LLM Brains
-
-The runtime ships direct-LLM brain implementations for all major providers. No extra packages. Credentials are read from environment variables.
+The runtime ships built-in LLM brains for OpenAI, Anthropic, and Ollama. `buildBrain(def)` auto-selects based on your agent definition:
 
 ```typescript
 import { buildBrain, loadAgent } from "msm-agent";
-
 const def = await loadAgent("./support-agent.md");
-const brain = buildBrain(def);
-// Reads OPENAI_API_KEY, ANTHROPIC_API_KEY, or OLLAMA_ENDPOINT from env
-// Routes to the correct provider based on def.brain.provider
+const brain = buildBrain(def); // reads OPENAI_API_KEY / ANTHROPIC_API_KEY / OLLAMA_ENDPOINT
 ```
 
-| Provider     | `provider:` value | Env var             | Notes                         |
-| ------------ | ----------------- | ------------------- | ----------------------------- |
-| OpenAI       | `openai`          | `OPENAI_API_KEY`    | GPT-4o, GPT-4o-mini, etc.     |
-| Anthropic    | `anthropic`       | `ANTHROPIC_API_KEY` | Claude 3, Claude 3.5, etc.    |
-| Ollama       | `ollama`          | `OLLAMA_ENDPOINT`   | Local models, zero cloud cost |
-| Azure OpenAI | `openai`          | `OPENAI_BASE_URL`   | Point to Azure endpoint       |
+| Provider     | `provider:` value | Env var             |
+| ------------ | ----------------- | ------------------- |
+| OpenAI       | `openai`          | `OPENAI_API_KEY`    |
+| Anthropic    | `anthropic`       | `ANTHROPIC_API_KEY` |
+| Ollama       | `ollama`          | `OLLAMA_ENDPOINT`   |
+| Azure OpenAI | `openai`          | `OPENAI_BASE_URL`   |
 
-For fine-grained control, create brain instances directly:
+For the [msm-ai](https://github.com/msm-core/msm-ai) 5-layer prompt pipeline, wrap it with `wrapMSM()` from `msm-agent/bridge/msm`. Any object with a `run(input): Promise<BrainPayload>` method also works as a custom brain.
 
-```typescript
-import {
-  createOpenAIBrain,
-  createAnthropicBrain,
-  createOllamaBrain,
-} from "msm-agent";
-
-const brain = createOpenAIBrain({
-  model: "gpt-4o",
-  apiKey: process.env.OPENAI_API_KEY,
-  temperature: 0.3,
-});
-```
-
-### MSM 5-Layer Brain (Advanced)
-
-[msm-ai](https://github.com/msm-core/msm-ai) provides a multi-layer prompt pipeline (persona, rules, context, memory, task state) for production use cases where the flat system prompt is insufficient.
-
-```typescript
-import { wrapMSM } from "msm-agent/bridge/msm";
-import { Pipeline } from "msm-ai";
-
-const brain = wrapMSM(
-  new Pipeline("support", [
-    personaLayer,
-    rulesLayer,
-    contextLayer,
-    memoryLayer,
-    taskLayer,
-  ]),
-);
-
-const agent = createAgent({ brain, ...adapters });
-```
-
-### Custom Brain
-
-Any object with a `run()` method works:
-
-```typescript
-const brain: Brain = {
-  run: async (input: BrainInput): Promise<BrainPayload> => ({
-    orchestration: { action: "respond" },
-    generation: { text: `Echo: ${input.text}`, language: "en" },
-  }),
-};
-```
+→ **Full examples and custom brain spec in [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)**
 
 ---
 
 ## 7. Production Adapters
 
-All adapters are selected automatically by the CLI based on environment variables. For embedded use, import and instantiate them directly.
+The CLI selects adapters automatically from environment variables. For embedded use, import them directly from `"msm-agent"`.
 
-### Memory Adapters
-
-| Adapter                 | Env var                         | Peer dep                | Best for                         |
+| Adapter                 | Activate via                    | Peer dep                | Best for                         |
 | ----------------------- | ------------------------------- | ----------------------- | -------------------------------- |
-| `InMemoryAdapter`       | —                               | none (built-in)         | Tests, prototypes                |
-| `SQLiteMemoryAdapter`   | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)      | Dev, single-container deployment |
+| `InMemoryAdapter`       | default                         | none                    | Tests, prototypes                |
+| `SQLiteMemoryAdapter`   | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)      | Dev, single-container            |
 | `PostgresMemoryAdapter` | `DATABASE_URL=postgresql://...` | `pnpm add postgres`     | Production, SQL workloads        |
 | `MongoMemoryAdapter`    | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`      | Production, Atlas Vector Search  |
 | `Neo4jMemoryAdapter`    | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver` | Graph-enriched semantic search   |
+| `RedisControlBus`       | `REDIS_URL=redis://...`         | `pnpm add ioredis`      | Multi-instance control bus       |
+| `BullMQEventAdapter`    | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries   |
+| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`    | none                    | Kader WhatsApp Gateway bridge    |
 
-**PostgreSQL** — tables created automatically (`agent_messages`, `agent_tasks`, `agent_memories`). `search()` uses `plainto_tsquery` full-text search with an ILIKE fallback.
+Neo4j wraps any primary adapter as a graph enrichment layer. Failed BullMQ jobs retry 3× with exponential back-off.
 
-**MongoDB** — collections created automatically. Text index on `agent_memories.content`. Compatible with Atlas Vector Search (store embeddings in `entry.metadata.embedding` and add an Atlas vector index separately).
-
-**SQLite** — uses the built-in `node:sqlite` module (Node.js 22.12+). Zero extra dependencies. Also provides `searchSync()` for synchronous memory retrieval inside the 5-layer prompt builder.
-
-**Neo4j** — graph enrichment layer. Wraps any primary adapter. Extracts keyword concepts from stored memories and links them as graph nodes. `search()` returns a union of graph traversal and primary text search, ranked by confidence.
-
-```typescript
-// Stack Neo4j on top of your primary store:
-const memory = await Neo4jMemoryAdapter.connect({
-  url: "bolt://localhost:7687",
-  user: "neo4j",
-  password: process.env.NEO4J_PASSWORD,
-  primary: postgresMemory, // or mongo, sqlite, in-memory
-});
-```
-
-### Control Bus Adapters
-
-| Adapter              | Env var                 | Peer dep           | Best for                    |
-| -------------------- | ----------------------- | ------------------ | --------------------------- |
-| `InMemoryControlBus` | —                       | none               | Dev and tests               |
-| `RedisControlBus`    | `REDIS_URL=redis://...` | `pnpm add ioredis` | Production (multi-instance) |
-
-Redis keys are prefixed `agent:task:killed:*`, `agent:tenant:paused:*`, `agent:tool:disabled:*`.
-
-### Event Queue — BullMQ
-
-For background processing, cron scheduling, and durable retry semantics:
-
-```typescript
-import { BullMQEventAdapter } from "msm-agent";
-// pnpm add bullmq ioredis
-
-const events = await BullMQEventAdapter.connect({
-  redisUrl: "redis://localhost:6379",
-  queueName: "agent-events",
-  concurrency: 5,
-});
-
-events.onEvent(agent.handleEvent);
-await events.start();
-
-// Enqueue from anywhere — webhooks, other services, cron jobs
-await events.enqueue({
-  type: "user_message",
-  sessionId: "s-1",
-  text: "Book me a table",
-  modality: "text",
-});
-
-// Recurring scheduled events
-await events.schedule("daily-brief", cronEvent, "0 9 * * *");
-```
-
-Failed jobs retry up to 3 times with exponential back-off (2s → 4s → 8s).
-
-### WhatsApp Channel
-
-Bridge adapter for the [Kader WhatsApp Gateway](https://github.com/msm-core/kader). Receives inbound messages via webhook and sends responses via the gateway's REST API. No Baileys dependency in this package.
-
-```bash
-WHATSAPP_GATEWAY_URL=http://gateway:4000
-WHATSAPP_TENANT_ID=acme-corp
-WHATSAPP_ACCOUNT_ID=main
-WHATSAPP_GATEWAY_KEY=secret
-WHATSAPP_WEBHOOK_SECRET=hmac-secret   # optional but recommended
-```
-
-With these set, the CLI automatically wires `WhatsAppEventAdapter` and `WhatsAppDeliveryAdapter`. Inbound messages arrive at `POST /webhook/whatsapp` (HMAC-SHA256 verified). Responses are sent via `POST <gateway>/messages/send`.
+→ **Full setup details, connect patterns, and Neo4j stacking in [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md)**
 
 ---
 
@@ -1163,306 +905,63 @@ await mcp.stop();
 
 ## 17. Running as a Microservice
 
-### CLI
-
-The CLI boots an HTTP server from any `.md` or `.it` agent definition file. All adapter wiring is automatic based on environment variables.
+The CLI boots an HTTP server from any `.md` or `.it` definition file. Adapters wire automatically from environment variables — no code changes needed.
 
 ```bash
-pnpm build
+# Minimal (in-memory, local dev)
+AGENT_FILE=./agent.md OPENAI_API_KEY=sk-... node dist/server/cli.js
 
-# Minimal — in-memory, for local testing only
-AGENT_FILE=./examples/support-agent.md \
-OPENAI_API_KEY=sk-... \
-node dist/server/cli.js
-
-# SQLite — single container, state survives restarts
-AGENT_FILE=./agent.md \
-MEMORY_PATH=/data/agent.db \
-OPENAI_API_KEY=sk-... \
-node dist/server/cli.js
-
-# Full production stack
-AGENT_FILE=./agent.md \
-DATABASE_URL=postgresql://user:pass@db:5432/mydb \
-REDIS_URL=redis://redis:6379 \
-EVOLVING_MODE=assist \
-DASHBOARD_PASSWORD=secret \
-OPENAI_API_KEY=sk-... \
-node dist/server/cli.js
+# Full production
+AGENT_FILE=./agent.md DATABASE_URL=postgresql://... REDIS_URL=redis://... node dist/server/cli.js
 ```
 
-### Docker Compose
+**Progression:** In-memory → SQLite → Postgres/Mongo → add Redis + BullMQ + `EVOLVING_MODE=shadow`.
 
-```yaml
-services:
-  agent:
-    build: .
-    environment:
-      AGENT_FILE: /agent/agent.md
-      DATABASE_URL: postgresql://agent:secret@db:5432/agent
-      REDIS_URL: redis://redis:6379
-      EVOLVING_MODE: shadow
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-    volumes:
-      - ./agent.md:/agent/agent.md:ro
-    ports:
-      - "3000:3000"
-    depends_on: [db, redis]
-
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: agent
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: agent
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-
-volumes:
-  pgdata:
-```
-
-### Environment Variables
-
-| Variable                  | Description                                             | Default                  |
-| ------------------------- | ------------------------------------------------------- | ------------------------ |
-| `AGENT_FILE`              | Path to agent definition (`.md` or `.it`)               | **required**             |
-| `PORT`                    | HTTP server port                                        | `3000`                   |
-| `HOST`                    | HTTP server host                                        | `0.0.0.0`                |
-| `DATABASE_URL`            | PostgreSQL or MongoDB URL                               | in-memory                |
-| `MEMORY_PATH`             | SQLite file path (overrides in-memory, dev default)     | in-memory                |
-| `NEO4J_URL`               | Neo4j bolt URL (wraps primary with graph layer)         | disabled                 |
-| `NEO4J_USER`              | Neo4j username                                          | `neo4j`                  |
-| `NEO4J_PASSWORD`          | Neo4j password                                          | —                        |
-| `REDIS_URL`               | Redis URL — activates RedisControlBus                   | InMemoryControlBus       |
-| `EVOLVING_MODE`           | `off` / `shadow` / `assist` — self-improvement mode     | `off`                    |
-| `ENABLE_JOBS`             | `true` — activates Jobs adapter and HTTP routes         | disabled                 |
-| `ENABLE_MCP`              | `true` — activates MCP server                           | disabled                 |
-| `MCP_TRANSPORT`           | `stdio` or `http`                                       | `stdio`                  |
-| `MCP_PORT`                | MCP HTTP transport port                                 | `3001`                   |
-| `DASHBOARD_PASSWORD`      | Enables ops dashboard at `/dashboard`                   | disabled                 |
-| `OPENAI_API_KEY`          | OpenAI credentials                                      | —                        |
-| `OPENAI_BASE_URL`         | OpenAI base URL override (Azure, proxy)                 | —                        |
-| `ANTHROPIC_API_KEY`       | Anthropic credentials                                   | —                        |
-| `OLLAMA_ENDPOINT`         | Ollama local server URL                                 | `http://localhost:11434` |
-| `WHATSAPP_GATEWAY_URL`    | Kader WhatsApp Gateway URL — activates WhatsApp channel | disabled                 |
-| `WHATSAPP_TENANT_ID`      | Tenant ID in the WhatsApp Gateway                       | —                        |
-| `WHATSAPP_ACCOUNT_ID`     | Account ID in the WhatsApp Gateway                      | —                        |
-| `WHATSAPP_GATEWAY_KEY`    | Bearer key for the gateway API                          | —                        |
-| `WHATSAPP_WEBHOOK_SECRET` | HMAC-SHA256 secret for inbound webhook verification     | —                        |
-
-### Progression Path
-
-**Prototype (< 1 hour):** `InMemoryAdapter` + `MockToolAdapter` + `ManualEventAdapter` + `ConsoleDeliveryAdapter` — everything in-memory, no external services.
-
-**Working agent (1 day):** Replace `MemoryAdapter` with `PostgresMemoryAdapter` or `MongoMemoryAdapter`. Replace `ToolAdapter` with your real tools. Add `DeliveryAdapter` for your channel (WhatsApp, Telegram, API response).
-
-**Production:** Add `REDIS_URL` for `RedisControlBus`. Switch to `BullMQEventAdapter` for durable queue ingress. Add `NEO4J_URL` for graph-enriched memory search. Set `EVOLVING_MODE=shadow` to start collecting quality data.
+→ **Docker Compose, all environment variables, and deployment guide in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
 ---
 
 ## 18. HTTP API Reference
 
-All responses are JSON. All write endpoints require `Content-Type: application/json`.
+| Endpoint            | Method | Description                                    |
+| ------------------- | ------ | ---------------------------------------------- |
+| `/health`           | GET    | Agent identity and readiness                   |
+| `/v1/event`         | POST   | Process any `AgentEvent` (stateful sessions)   |
+| `/chat`             | POST   | Stateless single-turn (demo / testing)         |
+| `/session/:id`      | GET    | Conversation history + active task             |
+| `/task/approve`     | POST   | Resume a paused approval task                  |
+| `/webhook/whatsapp` | POST   | Inbound WhatsApp (HMAC-SHA256 verified)        |
+| `/jobs/*`           | —      | Jobs CRUD (`ENABLE_JOBS=true`)                 |
+| `/admin/*`          | —      | Control bus + memory search (password-gated)   |
+| `/dashboard`        | GET    | Ops panel UI (`DASHBOARD_PASSWORD` required)   |
 
-### `GET /health`
-
-Agent identity and readiness check.
-
-```bash
-curl http://localhost:3000/health
-# { "status": "ok", "agent": "Support Agent", "domain": "...", "brain": {...} }
-```
-
-### `POST /v1/event`
-
-Process any `AgentEvent` through the full agent loop. Stateful — `sessionId` connects to conversation history.
-
-```bash
-# User message
-curl -X POST http://localhost:3000/v1/event \
-  -H "Content-Type: application/json" \
-  -d '{"type":"user_message","sessionId":"s1","text":"What is my order status?","modality":"text"}'
-
-# Webhook from external system
-curl -X POST http://localhost:3000/v1/event \
-  -H "Content-Type: application/json" \
-  -d '{"type":"webhook","sessionId":"s1","source":"stripe","payload":{"event":"payment.succeeded"}}'
-```
-
-### `POST /chat`
-
-Stateless single-turn. Generates a fresh `sessionId` automatically. No conversation history between calls. Use for demos, testing, and one-shot queries.
-
-```bash
-curl -X POST http://localhost:3000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What are your business hours?"}'
-# { "sessionId": "4a7b...", "outcome": { "type": "response", "text": "..." } }
-```
-
-### `GET /session/:id`
-
-Conversation history and active task state for a session. Requires a persistent memory adapter.
-
-```bash
-curl http://localhost:3000/session/s1
-# { "sessionId": "s1", "messages": [...], "activeTask": null }
-```
-
-### `POST /task/approve`
-
-Human approval callback for gated tool calls. When a tool has `requiresApproval: true`, the loop pauses and waits. Call this to resume.
-
-```bash
-curl -X POST http://localhost:3000/task/approve \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"s1","taskId":"task-123","approved":true,"decidedBy":"ops@acme.com"}'
-```
-
-### `POST /webhook/whatsapp`
-
-Inbound WhatsApp messages from the Kader WhatsApp Gateway. HMAC-SHA256 signature verified if `WHATSAPP_WEBHOOK_SECRET` is set. Enabled only when `WHATSAPP_GATEWAY_URL` is configured.
-
-### Jobs Routes (requires `ENABLE_JOBS=true`)
-
-```
-POST   /jobs              → create a job
-GET    /jobs              → list jobs (filter: ?status=running&sessionId=s1)
-GET    /jobs/:id          → get job state
-POST   /jobs/:id/cancel   → cancel a job
-```
-
-### Admin Routes (requires `DASHBOARD_PASSWORD`)
-
-All admin routes require HTTP Basic Auth (username: empty, password: `DASHBOARD_PASSWORD`).
-
-```
-GET  /admin/state        → health + control bus state
-POST /admin/control      → execute ControlCommand (kill_task, pause_tenant, …)
-GET  /admin/memory?q=    → semantic memory search
-```
+→ **Full request/response examples in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#2-http-api-reference)**
 
 ---
 
 ## 19. Ops Dashboard
 
-When `DASHBOARD_PASSWORD` is set, a self-contained ops panel is available at `GET /dashboard` on the same port as the API. No separate process, no build step, no external CDN.
+When `DASHBOARD_PASSWORD` is set, a built-in ops panel is available at `GET /dashboard`. Panels: pending approvals, control bus commands, memory search, session inspector. No external CDN or build step.
 
-```bash
-DASHBOARD_PASSWORD=secret AGENT_FILE=./agent.md node dist/server/cli.js
-# → open http://localhost:3000/dashboard
-```
-
-| Panel                 | Description                                                       |
-| --------------------- | ----------------------------------------------------------------- |
-| **Agent**             | Name, brain provider, model, capabilities list                    |
-| **Pending Approvals** | Tasks awaiting human decision — Approve / Deny buttons            |
-| **Control Bus**       | Kill task · Pause / resume tenant · Disable / enable tool         |
-| **Memory Search**     | Full-text search of semantic memory (requires `search()` adapter) |
-| **Session Inspector** | Look up any session — messages + active task state                |
-
-The dashboard uses constant-time password comparison (`timingSafeEqual`) to prevent timing attacks.
+→ [docs/DEPLOYMENT.md#3-ops-dashboard](docs/DEPLOYMENT.md#3-ops-dashboard)
 
 ---
 
 ## 20. Configuration Reference
 
-Full `createAgent()` options:
+Key `createAgent()` options: `brain`, `memory`, `tools`, `events`, `delivery`, plus `controlBus`, `evolving`, `gates`, `preHook`, `compactHistory`, `costExtractor`, `onIteration`, `onGuard`, `onPlanCreated`, `onFatalError`, `onInjectionDetected`.
 
-```typescript
-const agent = createAgent({
-  // Required
-  brain, // Brain — any object with brain.run(input)
-  memory, // MemoryAdapter
-  tools, // ToolAdapter
-  events, // EventAdapter
-  delivery, // DeliveryAdapter
+Loop config defaults: `maxIterations: 6`, `maxReplans: 2`, `confidenceThreshold: 0.6`, `toolDedup: true`, `costCapPerTask: 0` (unlimited), `timeoutMs: 0` (unlimited), `maxToolCallsPerTask: 0` (unlimited).
 
-  // Loop configuration
-  config: {
-    maxIterations: 6, // Max loop iterations per event (default: 6)
-    maxReplans: 2, // Max plan retries before freestyle (default: 2)
-    confidenceThreshold: 0.6, // Tool calls below this → clarification (default: 0.6)
-    costCapPerTask: 0.5, // USD limit per task, 0 = unlimited (default: 0)
-    timeoutMs: 30_000, // Wall-clock timeout, 0 = unlimited (default: 0)
-    toolDedup: true, // Deduplicate identical tool calls (default: true)
-  },
-
-  // Optional
-  controlBus, // ControlBusAdapter — for kill/pause/disable at runtime
-  evolving, // EvolvingAdapter — NoneEvolvingAdapter (default) or MemoryEvolvingAdapter
-  gates, // GatesConfig — pre-processing gates (acknowledgement, business hours)
-  tenantId, // string — used in control bus checks
-  equipmentBlock, // string — rendered equipment context block (from renderEquipmentBlock())
-
-  // Fast-intent gate — return an outcome directly, skip the brain loop
-  preHook: async (event) => {
-    if (/^(hi|hello|hey)$/i.test(event.text)) {
-      return {
-        type: "response",
-        text: "Hello! How can I help?",
-        language: "en",
-        payload: {},
-      };
-    }
-    return null; // null → proceed to brain loop
-  },
-
-  // Custom history compaction (replace naive truncation with LLM summary)
-  compactHistory: async (messages) => {
-    const summary = await llm.summarize(messages.slice(0, -6));
-    return [
-      { role: "assistant", content: `[Summary] ${summary}` },
-      ...messages.slice(-6),
-    ];
-  },
-
-  // Observability
-  onIteration: (state, step) => {
-    metrics.record(step);
-  },
-  onGuard: (signal) => {
-    logger.warn("Guard fired", signal);
-  },
-});
-```
-
-### LoopOutcome Types
-
-| Type            | When                                         | Key fields                                      |
-| --------------- | -------------------------------------------- | ----------------------------------------------- |
-| `response`      | Brain says respond / task complete           | `text`, `language`, `payload`                   |
-| `clarification` | Brain asks a question or confidence too low  | `question`, `payload`                           |
-| `escalated`     | Brain hands off to a human                   | `reason`, `payload`                             |
-| `delegated`     | Brain routes to another agent role           | `targetRole`, `payload`                         |
-| `aborted`       | Control bus killed the task or paused tenant | `taskId`, `reason`                              |
-| `suppressed`    | Gate filtered the event (no delivery)        | `reason: "acknowledgement" \| "business_hours"` |
-| `error`         | Brain returned malformed output              | `error`, `payload?`                             |
-| `custom`        | Brain returned a non-standard action         | `action`, `payload`                             |
+→ **Full options, `LoopOutcome` types in [docs/DEPLOYMENT.md#4-configuration-reference](docs/DEPLOYMENT.md#4-configuration-reference)**
 
 ---
 
 ## 21. Guard System
 
-Guards evaluate the agent's state every loop iteration and every tool call. Hard guards stop execution. Soft guards emit an advisory signal to `onGuard` for you to handle.
+Hard guards abort execution (iteration budget, cost cap, timeout, confidence gate, task killed, tenant paused, rate limited, tool disabled). Soft guards emit advisory signals to `onGuard` (repetition, dead-end).
 
-| Guard                | Type | Trigger                               | Response                          |
-| -------------------- | ---- | ------------------------------------- | --------------------------------- |
-| **Confidence Gate**  | Hard | Tool call with confidence < threshold | Converts to clarification request |
-| **Iteration Budget** | Hard | iteration >= maxIterations            | Force-respond with last text      |
-| **Cost Budget**      | Hard | totalCost >= costCapPerTask           | Force-respond                     |
-| **Time Budget**      | Hard | elapsed >= timeoutMs                  | Force-respond                     |
-| **Rate Limited**     | Hard | ToolAdapter.checkRateLimit() > 0      | Skip tool, continue loop          |
-| **Tool Disabled**    | Hard | Control bus disabled this tool        | Skip tool, continue loop          |
-| **Task Killed**      | Hard | Control bus killed this task          | Return `aborted` outcome          |
-| **Tenant Paused**    | Hard | Control bus paused this tenant        | Return `aborted` outcome          |
-| **Repetition**       | Soft | Same tool 3+ times consecutively      | Advisory signal via `onGuard`     |
-| **Dead-End**         | Soft | 4+ failures across 2 or more tools    | Advisory signal via `onGuard`     |
+→ [docs/DEPLOYMENT.md#5-guard-system](docs/DEPLOYMENT.md#5-guard-system)
 
 ---
 
@@ -1503,6 +1002,7 @@ MIT
 
 ## Further Reading
 
-- [Production Readiness & Ownership Boundary](docs/production-readiness-and-boundary.md)
-- [Integration Guide](docs/INTEGRATION-GUIDE.md)
+- [Integration Guide](docs/INTEGRATION-GUIDE.md) — adapter specs, brain wiring, production setup, full example
+- [Deployment Reference](docs/DEPLOYMENT.md) — CLI, Docker, HTTP API, config options, guard reference
+- [Production Readiness & Ownership Boundary](docs/production-readiness-and-boundary.md) — parity matrix, what to build yourself
 
