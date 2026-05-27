@@ -192,7 +192,18 @@ export function createAgentHub(
         );
       }
       // Enforce session namespacing to prevent cross-agent memory bleed.
-      return entry.agent.handleEvent(namespaceEvent(agentName, event));
+      const outcome = await entry.agent.handleEvent(
+        namespaceEvent(agentName, event),
+      );
+      // Auto-delegation: if a registered agent handles the target role, re-route.
+      if (
+        outcome.type === "delegated" &&
+        registry.has(outcome.targetRole) &&
+        outcome.targetRole !== agentName // prevent self-delegation loop
+      ) {
+        return hub.handleEvent(outcome.targetRole, event);
+      }
+      return outcome;
     },
 
     provisionAgent(

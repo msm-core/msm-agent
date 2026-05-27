@@ -184,7 +184,9 @@ describe("MemoryEvolvingAdapter (assist)", () => {
     const memory = makeMemoryAdapter({
       search: vi.fn().mockResolvedValue([evolutionEntry]),
     });
-    const adapter = new MemoryEvolvingAdapter(memory, "assist");
+    const adapter = new MemoryEvolvingAdapter(memory, "assist", {
+      minSampleSize: 1,
+    });
     const hints = await adapter.preReason(ctx);
 
     expect(hints).toHaveLength(1);

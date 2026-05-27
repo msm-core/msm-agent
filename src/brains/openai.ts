@@ -12,9 +12,10 @@
  * Optional env: OPENAI_BASE_URL (for proxies or Azure OpenAI)
  */
 
-import type { Brain, BrainPayload } from "../core/types.js";
+import type { Brain, BrainPayload, PlanStep } from "../core/types.js";
 import type { ToolDefinition } from "../adapters/tools.js";
 import { STANDARD_ACTIONS } from "../core/types.js";
+import { AGENT_META_TOOL, resolveAgentMeta } from "./agent-meta.js";
 
 export interface OpenAIBrainOptions {
   apiKey: string;
@@ -32,6 +33,13 @@ export interface OpenAIBrainOptions {
    * Overrides the static systemPrompt.
    */
   promptBuilder?: (input: Parameters<Brain["run"]>[0]) => string;
+  /**
+   * When true, the brain makes an upfront planning call on the first iteration
+   * to generate a multi-step plan before executing. The plan is returned in
+   * `orchestration.plan` and tracked by the loop throughout the task.
+   * @default false
+   */
+  usePlanning?: boolean;
 }
 
 interface OpenAIMessage {
@@ -65,11 +73,82 @@ interface OpenAIResponse {
   error?: { message: string; type: string };
 }
 
+/** Generate an upfront execution plan via a dedicated JSON call (internal). */
+async function generateOpenAIPlan(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  userRequest: string,
+): Promise<PlanStep[]> {
+  const planBody = {
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          'You produce execution plans. Given a user request, respond ONLY with a valid JSON object:\n{"plan":[{"id":1,"description":"…","tool_hint":"tool_name_or_null"}]}\nUse tool_hint as the relevant function name if a tool call is expected, otherwise null. Limit to 6 steps.',
+      },
+      { role: "user", content: userRequest },
+    ],
+    temperature: 0,
+    response_format: { type: "json_object" },
+  };
+
+  try {
+    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(planBody),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as OpenAIResponse;
+    const content = data.choices?.[0]?.message?.content ?? "{}";
+    const parsed = JSON.parse(content) as {
+      plan?: Array<{
+        id?: unknown;
+        description?: unknown;
+        tool_hint?: unknown;
+      }>;
+    };
+    if (!Array.isArray(parsed.plan)) return [];
+    return parsed.plan
+      .filter((s) => typeof s.description === "string")
+      .map((s, i) => ({
+        id: typeof s.id === "number" ? s.id : i + 1,
+        description: String(s.description),
+        tool_hint: s.tool_hint ? String(s.tool_hint) : null,
+        status: "pending" as const,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
   const baseUrl = opts.baseUrl ?? "https://api.openai.com";
 
   return {
     async run(input): Promise<BrainPayload> {
+      // Planning pre-call — first iteration only, when usePlanning is enabled
+      let upfrontPlan: PlanStep[] | undefined;
+      if (
+        opts.usePlanning &&
+        (!input.tool_results || input.tool_results.length === 0)
+      ) {
+        upfrontPlan = await generateOpenAIPlan(
+          baseUrl,
+          opts.apiKey,
+          opts.model,
+          input.raw,
+        );
+        if (upfrontPlan.length === 0) upfrontPlan = undefined;
+      }
+
       const systemContent = opts.promptBuilder
         ? opts.promptBuilder(input)
         : opts.systemPrompt;
@@ -102,29 +181,28 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
         temperature: opts.temperature ?? 0.3,
       };
 
-      // Attach tool definitions if provided
-      if (opts.tools && opts.tools.length > 0) {
-        body.tools = opts.tools.map((t) => ({
-          type: "function",
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: {
-              type: "object",
-              properties: Object.fromEntries(
-                Object.entries(t.parameters).map(([name, p]) => [
-                  name,
-                  { type: p.type, description: p.description },
-                ]),
-              ),
-              required: Object.entries(t.parameters)
-                .filter(([, p]) => p.required)
-                .map(([name]) => name),
-            },
+      // Attach tool definitions — always include agent_meta for explicit signalling
+      const allTools = [...(opts.tools ?? []), AGENT_META_TOOL];
+      body.tools = allTools.map((t) => ({
+        type: "function",
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: {
+            type: "object",
+            properties: Object.fromEntries(
+              Object.entries(t.parameters).map(([name, p]) => [
+                name,
+                { type: p.type, description: p.description },
+              ]),
+            ),
+            required: Object.entries(t.parameters)
+              .filter(([, p]) => p.required)
+              .map(([name]) => name),
           },
-        }));
-        body.tool_choice = "auto";
-      }
+        },
+      }));
+      body.tool_choice = "auto";
 
       const res = await fetch(`${baseUrl}/v1/chat/completions`, {
         method: "POST",
@@ -160,12 +238,22 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
           // leave empty if unparseable
         }
 
+        // agent_meta signals (clarify / escalate / delegate)
+        if (tc.function.name === "agent_meta") {
+          const resolved = resolveAgentMeta(
+            String(params["action"] ?? ""),
+            String(params["message"] ?? ""),
+          );
+          if (resolved) return resolved;
+        }
+
         return {
           orchestration: {
             action: STANDARD_ACTIONS.USE_TOOL,
             confidence: 0.9,
             tool_name: tc.function.name,
             tool_params: params,
+            ...(upfrontPlan ? { plan: upfrontPlan } : {}),
           },
         };
       }
@@ -177,6 +265,7 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
         orchestration: {
           action: STANDARD_ACTIONS.RESPOND,
           confidence: 0.95,
+          ...(upfrontPlan ? { plan: upfrontPlan } : {}),
         },
         generation: { response_text: text },
         final_output: { text, language: "en" },

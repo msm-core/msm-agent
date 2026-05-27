@@ -118,10 +118,22 @@ export class NoneEvolvingAdapter implements EvolvingAdapter {
  */
 export class MemoryEvolvingAdapter implements EvolvingAdapter {
   readonly mode: EvolvingMode;
+  private readonly minSampleSize: number;
 
   constructor(
     private readonly memory: MemoryAdapter,
     mode: EvolvingMode = "shadow",
+    options: {
+      /**
+       * Minimum number of recorded evolution events before hints are injected
+       * in assist mode. Below this threshold preReason() returns [] — the adapter
+       * observes without influencing the brain.
+       *
+       * Prevents noisy 1–2 sample hints from skewing early decisions.
+       * @default 5
+       */
+      minSampleSize?: number;
+    } = {},
   ) {
     if (mode === "off") {
       throw new Error(
@@ -129,6 +141,7 @@ export class MemoryEvolvingAdapter implements EvolvingAdapter {
       );
     }
     this.mode = mode;
+    this.minSampleSize = options.minSampleSize ?? 5;
   }
 
   async preReason(ctx: EvolvingContext): Promise<string[]> {
@@ -143,11 +156,8 @@ export class MemoryEvolvingAdapter implements EvolvingAdapter {
       const strategyEntries = entries.filter(
         (e) => e.source === "evolution.strategy",
       );
-      for (const e of strategyEntries) {
-        hints.push(`[strategy] ${e.content}`);
-      }
 
-      // Past evolution events (Phase 10 original behaviour)
+      // Past evolution events
       const evolutionEntries = entries.filter((e) => {
         if (e.source === "evolution.strategy") return false;
         try {
@@ -157,6 +167,19 @@ export class MemoryEvolvingAdapter implements EvolvingAdapter {
           return false;
         }
       });
+
+      // Enforce minSampleSize — don't inject hints until we have enough data.
+      // Strategy notes are exempt (they're aggregated, not raw samples).
+      if (
+        evolutionEntries.length < this.minSampleSize &&
+        strategyEntries.length === 0
+      ) {
+        return [];
+      }
+
+      for (const e of strategyEntries) {
+        hints.push(`[strategy] ${e.content}`);
+      }
 
       for (const e of evolutionEntries) {
         try {
