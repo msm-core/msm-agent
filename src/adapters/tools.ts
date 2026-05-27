@@ -7,6 +7,7 @@
  */
 
 import type { ToolResult } from "../core/types.js";
+export type { ToolResult };
 
 export interface ToolDefinition {
   name: string;

@@ -37,6 +37,11 @@ export class ConsoleDeliveryAdapter implements DeliveryAdapter {
       case "custom":
         console.log(`[${sessionId}] ⚡ Custom action: ${outcome.action}`);
         break;
+      case "suppressed":
+        // Suppressed outcomes (ack gate) are not delivered — the event handler
+        // already skips calling send() for these, but handle gracefully if called
+        // directly in tests.
+        break;
     }
   }
 

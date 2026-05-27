@@ -1,6 +1,6 @@
 {
   "name": "msm-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Portable agent framework — brain-agnostic execution core for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -13,13 +13,30 @@
     "./bridge/msm": {
       "types": "./dist/bridge/msm.d.ts",
       "default": "./dist/bridge/msm.js"
+    },
+    "./brains": {
+      "types": "./dist/brains/index.d.ts",
+      "default": "./dist/brains/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "default": "./dist/server/index.js"
+    },
+    "./prompt": {
+      "types": "./dist/prompt/index.d.ts",
+      "default": "./dist/prompt/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
+    "start": "node dist/server/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo": "tsx src/demo.ts",
     "prepublishOnly": "pnpm run build"
   },
   "keywords": [
@@ -36,9 +53,45 @@
     "type": "git",
     "url": "https://github.com/msm-core/msm-agent"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@intenttext/core": "^3.3.2",
+    "zod": "^3.24.0"
+  },
   "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4",
-    "tsx": "^4.19.4"
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "bullmq": "^5.0.0",
+    "ioredis": "^5.4.0",
+    "mongodb": "^6.14.0",
+    "neo4j-driver": "^5.28.0",
+    "postgres": "^3.4.0",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "peerDependenciesMeta": {
+    "postgres": {
+      "optional": true
+    },
+    "mongodb": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "bullmq": {
+      "optional": true
+    },
+    "neo4j-driver": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": true
+    }
   }
 }

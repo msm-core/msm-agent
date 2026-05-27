@@ -299,7 +299,13 @@ export type LoopOutcome =
   | { type: "delegated"; targetRole: string; payload: BrainPayload }
   | { type: "error"; error: string; payload?: BrainPayload }
   | { type: "aborted"; taskId: string; reason: string }
-  | { type: "custom"; action: string; payload: BrainPayload };
+  | { type: "custom"; action: string; payload: BrainPayload }
+  /**
+   * Suppressed outcomes are produced by pre-processing gates (acknowledgements).
+   * No delivery is made — the agent stays silent. Business hours closures use
+   * the "response" type with a canned message instead.
+   */
+  | { type: "suppressed"; reason: "acknowledgement" | "business_hours" };
 
 // ─── Agent Handle ────────────────────────────────────────────
 

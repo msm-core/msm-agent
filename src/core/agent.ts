@@ -26,7 +26,10 @@ import type { ToolAdapter } from "../adapters/tools.js";
 import type { EventAdapter } from "../adapters/events.js";
 import type { DeliveryAdapter } from "../adapters/delivery.js";
 import type { ControlBusAdapter } from "../adapters/control-bus.js";
+import type { EvolvingAdapter } from "../adapters/evolving.js";
 import { executeEvent, type LoopDeps } from "./loop.js";
+import { checkGates, type GatesConfig } from "./gates.js";
+import { scoreOutcome } from "./quality.js";
 
 function resolveSessionId(event: AgentEvent): string {
   return "sessionId" in event ? event.sessionId : `cron-${Date.now()}`;
@@ -80,6 +83,24 @@ export interface CreateAgentOptions {
    * Return a LoopOutcome to short-circuit, or null to continue with stripped input.
    */
   onInjectionDetected?: LoopDeps["onInjectionDetected"];
+  /**
+   * Optional: evolving layer — learns from outcomes over time.
+   * Provide a MemoryEvolvingAdapter (shadow or assist mode) to enable.
+   * In assist mode, past approaches are injected into the prompt.
+   */
+  evolving?: EvolvingAdapter;
+  /**
+   * Optional: pre-processing gates — zero-LLM filters applied before the brain loop.
+   * Acknowledgement gate suppresses "ok/thanks/تمام" messages.
+   * Business hours gate sends a canned closed message outside working hours.
+   */
+  gates?: GatesConfig;
+  /**
+   * Optional: pre-rendered equipment block for system prompt injection.
+   * Generated via renderEquipmentBlock(def.equipment) from the agent definition.
+   * Tells the LLM which external systems it can reach and at what access level.
+   */
+  equipmentBlock?: string;
 }
 
 /**
@@ -133,14 +154,21 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     onPlanCreated: options.onPlanCreated,
     onFatalError: options.onFatalError,
     onInjectionDetected: options.onInjectionDetected,
+    equipmentBlock: options.equipmentBlock,
   };
 
-  /** Execute an event with pre-hook and session mutex */
+  /** Execute an event with pre-hook, evolving layer, and session mutex */
   async function processEvent(
     event: AgentEvent,
     sessionId = resolveSessionId(event),
   ): Promise<LoopOutcome> {
     return mutex.acquire(sessionId, async () => {
+      // Pre-processing gates: zero-LLM filters (ack suppression, business hours)
+      if (event.type === "user_message" && options.gates) {
+        const gateOutcome = checkGates(event.text, options.gates);
+        if (gateOutcome) return gateOutcome;
+      }
+
       // Fast-intent pre-hook: skip brain loop for trivials
       if (options.preHook) {
         const shortCircuit = await options.preHook(event);
@@ -149,7 +177,41 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
         }
       }
 
-      return executeEvent(event, deps, sessionId);
+      // Evolving pre-reason: inject hints from past outcomes (assist mode only)
+      let evolvingHints: string[] = [];
+      if (options.evolving && event.type === "user_message") {
+        evolvingHints = await options.evolving
+          .preReason({
+            sessionId,
+            taskId: "",
+            situation: event.text,
+          })
+          .catch(() => []);
+      }
+
+      const outcome = await executeEvent(
+        event,
+        evolvingHints.length > 0 ? { ...deps, evolvingHints } : deps,
+        sessionId,
+      );
+
+      // Evolving post-outcome: record what happened (shadow + assist modes)
+      if (options.evolving && event.type === "user_message") {
+        const quality = scoreOutcome(outcome);
+        void options.evolving
+          .postOutcome(
+            {
+              sessionId,
+              taskId: "",
+              situation: event.text,
+              quality,
+            },
+            outcome,
+          )
+          .catch(() => {});
+      }
+
+      return outcome;
     });
   }
 
@@ -157,7 +219,10 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
   options.events.onEvent(async (event: AgentEvent) => {
     const sessionId = resolveSessionId(event);
     const outcome = await processEvent(event, sessionId);
-    await options.delivery.send(sessionId, outcome);
+    // Suppressed outcomes (acknowledgement gate) produce no delivery — stay silent
+    if (outcome.type !== "suppressed") {
+      await options.delivery.send(sessionId, outcome);
+    }
   });
 
   return {

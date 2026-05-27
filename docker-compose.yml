@@ -1,0 +1,42 @@
+# msm-agent — docker compose
+#
+# Usage:
+#   cp examples/support-agent.md ./agent.md
+#   OPENAI_API_KEY=sk-... docker compose up
+#
+# The build context is ../../ (projects root) so the @intenttext/core
+# file: dependency is resolvable inside the builder stage.
+
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: msm-ai/agent/Dockerfile
+    image: msm-agent:latest
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      AGENT_FILE: /app/agent.md
+      MEMORY_PATH: /data/agent.db
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      # Pass through LLM credentials from host environment
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_ENDPOINT: ${OLLAMA_ENDPOINT:-http://host.docker.internal:11434}
+    volumes:
+      # Mount your agent definition (read-only)
+      - ${AGENT_FILE:-./agent.md}:/app/agent.md:ro
+      # Named volume for persistent SQLite memory
+      - agent-memory:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  agent-memory:

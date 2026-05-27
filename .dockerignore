@@ -1,0 +1,49 @@
+# .dockerignore — adjacent to Dockerfile (Docker BuildKit picks this up
+# even when the build context is set to the projects root ../../).
+#
+# Strategy: exclude everything we don't need; keep only:
+#   msm-ai/agent/src + package.json + pnpm-lock.yaml + tsconfig.json
+#   IntentText/packages/core/dist + package.json
+
+# ── Entire kader project (not needed) ────────────────────────────────────────
+kader/
+
+# ── MSM pipeline project (not the agent) ────────────────────────────────────
+msm/
+
+# ── IntentText root files (only need packages/core/dist) ─────────────────────
+IntentText/*.js
+IntentText/*.md
+IntentText/*.html
+IntentText/cli.js
+IntentText/demo.js
+IntentText/examples/
+IntentText/plans/
+IntentText/todo/
+IntentText/packages/core/src/
+IntentText/packages/core/node_modules/
+IntentText/packages/core/fixtures/
+IntentText/packages/core/tests/
+IntentText/packages/core/scripts/
+IntentText/packages/core/*.tgz
+IntentText/packages/core/*.yaml
+IntentText/packages/core/vitest.config.ts
+IntentText/packages/core/tsconfig.json
+IntentText/packages/core/.DS_Store
+IntentText/packages/core/pnpm-lock.yaml
+
+# ── Agent dev artifacts ───────────────────────────────────────────────────────
+msm-ai/agent/node_modules/
+msm-ai/agent/dist/
+msm-ai/agent/tests/
+msm-ai/agent/examples/
+msm-ai/agent/docs/
+msm-ai/agent/.git/
+msm-ai/agent/docker-compose.yml
+msm-ai/agent/.dockerignore
+
+# ── Common noise ─────────────────────────────────────────────────────────────
+**/.DS_Store
+**/.git/
+**/coverage/
+**/*.log

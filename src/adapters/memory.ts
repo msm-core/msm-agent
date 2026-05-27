@@ -50,12 +50,23 @@ export interface MemoryAdapter {
   search?(query: string, limit: number): Promise<MemoryEntry[]>;
   /** Store a memory entry (for learning from interactions) */
   store?(entry: MemoryEntry): Promise<void>;
+  /**
+   * Delete a memory entry by ID.
+   * Phase 17 — used by consolidateStrategies() to prune stale/contradictory notes.
+   * Optional: adapters that don't support deletion gracefully no-op.
+   */
+  delete?(id: string): Promise<void>;
 }
 
 export interface MemoryEntry {
   id: string;
   content: string;
-  source: "task" | "conversation" | "user_explicit" | "system";
+  source:
+    | "task"
+    | "conversation"
+    | "user_explicit"
+    | "system"
+    | "evolution.strategy";
   confidence: number;
   createdAt: string;
   metadata?: Record<string, unknown>;
