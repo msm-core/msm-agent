@@ -27,6 +27,10 @@ import type { EventAdapter } from "../adapters/events.js";
 import type { DeliveryAdapter } from "../adapters/delivery.js";
 import type { ControlBusAdapter } from "../adapters/control-bus.js";
 import type { EvolvingAdapter } from "../adapters/evolving.js";
+import {
+  InProcessLockAdapter,
+  type DistributedLockAdapter,
+} from "../adapters/distributed-lock.js";
 import { executeEvent, type LoopDeps } from "./loop.js";
 import { checkGates, type GatesConfig } from "./gates.js";
 import { scoreOutcome } from "./quality.js";
@@ -116,43 +120,24 @@ export interface CreateAgentOptions {
    *   createAgent({ brain, memory, tools, ..., knowledge: kb });
    */
   knowledge?: import("../adapters/knowledge.js").KnowledgeAdapter;
-}
 
-/**
- * Simple per-session mutex. Ensures only one executeEvent runs per session
- * at a time. Subsequent events for the same session queue behind the first.
- *
- * Prevents double-tap race conditions (e.g., WhatsApp "Yes, Yes" on approval).
- */
-class SessionMutex {
-  private locks = new Map<string, Promise<void>>();
-
-  async acquire<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
-    // Chain behind any existing lock for this session
-    const prev = this.locks.get(sessionId) ?? Promise.resolve();
-    let releaseFn!: () => void;
-    const next = new Promise<void>((resolve) => {
-      releaseFn = resolve;
-    });
-    this.locks.set(sessionId, next);
-
-    // Wait for previous operation to finish
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      releaseFn();
-      // Clean up if no one else is queued
-      if (this.locks.get(sessionId) === next) {
-        this.locks.delete(sessionId);
-      }
-    }
-  }
+  /**
+   * Optional: distributed lock adapter for session concurrency control.
+   *
+   * When not provided, the default in-process lock is used (correct for single-instance
+   * deployments). For horizontally scaled deployments, provide a `RedisDistributedLock`
+   * to prevent two instances from processing the same session simultaneously:
+   *
+   *   const lock = await RedisDistributedLock.connect(process.env.REDIS_URL);
+   *   createAgent({ brain, memory, tools, ..., distributedLock: lock });
+   */
+  distributedLock?: DistributedLockAdapter;
 }
 
 export function createAgent(options: CreateAgentOptions): AgentHandle {
   const config: AgentConfig = { ...DEFAULT_CONFIG, ...options.config };
-  const mutex = new SessionMutex();
+  const lock: DistributedLockAdapter =
+    options.distributedLock ?? new InProcessLockAdapter();
 
   const deps: LoopDeps = {
     brain: options.brain,
@@ -173,12 +158,22 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
     knowledge: options.knowledge,
   };
 
-  /** Execute an event with pre-hook, evolving layer, and session mutex */
+  /** Execute an event with pre-hook, evolving layer, and session lock */
   async function processEvent(
     event: AgentEvent,
     sessionId = resolveSessionId(event),
   ): Promise<LoopOutcome> {
-    return mutex.acquire(sessionId, async () => {
+    const SESSION_LOCK_TTL_MS = 5 * 60 * 1000; // 5 min max per event
+    const handle = await lock.acquire(sessionId, SESSION_LOCK_TTL_MS);
+    if (!handle) {
+      // Another instance is processing this session — return busy signal
+      return {
+        type: "error",
+        error:
+          "A request is already being processed for this session. Please try again shortly.",
+      };
+    }
+    try {
       // Pre-processing gates: zero-LLM filters (ack suppression, business hours)
       if (event.type === "user_message" && options.gates) {
         const gateOutcome = checkGates(event.text, options.gates);
@@ -228,7 +223,9 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
       }
 
       return outcome;
-    });
+    } finally {
+      await handle.release();
+    }
   }
 
   // Wire event adapter → processEvent → delivery

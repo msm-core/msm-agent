@@ -84,33 +84,33 @@ volumes:
 
 ### Environment Variables
 
-| Variable                  | Description                                             | Default                  |
-| ------------------------- | ------------------------------------------------------- | ------------------------ |
-| `AGENT_FILE`              | Path to agent definition (`.md` or `.it`)               | **required**             |
-| `PORT`                    | HTTP server port                                        | `3000`                   |
-| `HOST`                    | HTTP server host                                        | `0.0.0.0`                |
-| `DATABASE_URL`            | PostgreSQL or MongoDB URL                               | in-memory                |
-| `MEMORY_PATH`             | SQLite file path (overrides in-memory, dev default)     | in-memory                |
-| `NEO4J_URL`               | Neo4j bolt URL (wraps primary with graph layer)         | disabled                 |
-| `NEO4J_USER`              | Neo4j username                                          | `neo4j`                  |
-| `NEO4J_PASSWORD`          | Neo4j password                                          | —                        |
-| `REDIS_URL`               | Redis URL — activates RedisControlBus                   | InMemoryControlBus       |
-| `EVOLVING_MODE`           | `off` / `shadow` / `assist` — self-improvement mode     | `off`                    |
-| `ENABLE_JOBS`             | `true` — activates Jobs adapter and HTTP routes         | disabled                 |
-| `ENABLE_MCP`              | `true` — activates MCP server                           | disabled                 |
-| `MCP_TRANSPORT`           | `stdio` or `http`                                       | `stdio`                  |
-| `MCP_PORT`                | MCP HTTP transport port                                 | `3001`                   |
-| `DASHBOARD_PASSWORD`      | Enables ops dashboard at `/dashboard`                   | disabled                 |
-| `OPENAI_API_KEY`          | OpenAI credentials                                      | —                        |
-| `OPENAI_BASE_URL`         | OpenAI base URL override (Azure, proxy)                 | —                        |
-| `ANTHROPIC_API_KEY`       | Anthropic credentials                                   | —                        |
-| `OLLAMA_ENDPOINT`         | Ollama local server URL                                 | `http://localhost:11434` |
-| `SOVEREIGN`               | `true` — blocks all external network calls at startup   | disabled                 |
-| `WHATSAPP_GATEWAY_URL`    | Kader WhatsApp Gateway URL — activates WhatsApp channel | disabled                 |
-| `WHATSAPP_TENANT_ID`      | Tenant ID in the WhatsApp Gateway                       | —                        |
-| `WHATSAPP_ACCOUNT_ID`     | Account ID in the WhatsApp Gateway                      | —                        |
-| `WHATSAPP_GATEWAY_KEY`    | Bearer key for the gateway API                          | —                        |
-| `WHATSAPP_WEBHOOK_SECRET` | HMAC-SHA256 secret for inbound webhook verification     | —                        |
+| Variable                  | Description                                            | Default                  |
+| ------------------------- | ------------------------------------------------------ | ------------------------ |
+| `AGENT_FILE`              | Path to agent definition (`.md` or `.it`)              | **required**             |
+| `PORT`                    | HTTP server port                                       | `3000`                   |
+| `HOST`                    | HTTP server host                                       | `0.0.0.0`                |
+| `DATABASE_URL`            | PostgreSQL or MongoDB URL                              | in-memory                |
+| `MEMORY_PATH`             | SQLite file path (overrides in-memory, dev default)    | in-memory                |
+| `NEO4J_URL`               | Neo4j bolt URL (wraps primary with graph layer)        | disabled                 |
+| `NEO4J_USER`              | Neo4j username                                         | `neo4j`                  |
+| `NEO4J_PASSWORD`          | Neo4j password                                         | —                        |
+| `REDIS_URL`               | Redis URL — activates RedisControlBus                  | InMemoryControlBus       |
+| `EVOLVING_MODE`           | `off` / `shadow` / `assist` — self-improvement mode    | `off`                    |
+| `ENABLE_JOBS`             | `true` — activates Jobs adapter and HTTP routes        | disabled                 |
+| `ENABLE_MCP`              | `true` — activates MCP server                          | disabled                 |
+| `MCP_TRANSPORT`           | `stdio` or `http`                                      | `stdio`                  |
+| `MCP_PORT`                | MCP HTTP transport port                                | `3001`                   |
+| `DASHBOARD_PASSWORD`      | Enables ops dashboard at `/dashboard`                  | disabled                 |
+| `OPENAI_API_KEY`          | OpenAI credentials                                     | —                        |
+| `OPENAI_BASE_URL`         | OpenAI base URL override (Azure, proxy)                | —                        |
+| `ANTHROPIC_API_KEY`       | Anthropic credentials                                  | —                        |
+| `OLLAMA_ENDPOINT`         | Ollama local server URL                                | `http://localhost:11434` |
+| `SOVEREIGN`               | `true` — blocks all external network calls at startup  | disabled                 |
+| `WHATSAPP_GATEWAY_URL`    | WhatsApp HTTP gateway URL — activates WhatsApp channel | disabled                 |
+| `WHATSAPP_TENANT_ID`      | Tenant ID in the WhatsApp Gateway                      | —                        |
+| `WHATSAPP_ACCOUNT_ID`     | Account ID in the WhatsApp Gateway                     | —                        |
+| `WHATSAPP_GATEWAY_KEY`    | Bearer key for the gateway API                         | —                        |
+| `WHATSAPP_WEBHOOK_SECRET` | HMAC-SHA256 secret for inbound webhook verification    | —                        |
 
 ### Progression Path
 
@@ -183,7 +183,7 @@ curl -X POST http://localhost:3000/task/approve \
 
 ### `POST /webhook/whatsapp`
 
-Inbound WhatsApp messages from the Kader WhatsApp Gateway. HMAC-SHA256 signature verified if `WHATSAPP_WEBHOOK_SECRET` is set. Enabled only when `WHATSAPP_GATEWAY_URL` is configured.
+Inbound WhatsApp messages from the WhatsApp gateway. HMAC-SHA256 signature verified if `WHATSAPP_WEBHOOK_SECRET` is set. Enabled only when `WHATSAPP_GATEWAY_URL` is configured.
 
 ### Jobs Routes (requires `ENABLE_JOBS=true`)
 

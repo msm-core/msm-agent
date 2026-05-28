@@ -93,7 +93,7 @@ export class SQLiteMemoryAdapter implements MemoryAdapter {
   async getConversation(sessionId: string, limit?: number): Promise<Message[]> {
     const sql =
       limit !== undefined
-        ? "SELECT role, content, timestamp FROM (SELECT role, content, timestamp, created_at FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+        ? "SELECT role, content, timestamp FROM (SELECT role, content, timestamp, created_at, rowid FROM messages WHERE session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?) ORDER BY created_at ASC, rowid ASC"
         : "SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY created_at ASC";
     const rows = (limit !== undefined
       ? this.db.prepare(sql).all(sessionId, limit)

@@ -125,6 +125,19 @@ export type { Neo4jMemoryAdapterOptions } from "./adapters/neo4j-memory.js";
 // Activate: REDIS_URL=redis://host:6379
 export { RedisControlBus } from "./adapters/redis-control-bus.js";
 
+// Distributed session locking — prevents concurrent processing of the same session
+// across multiple agent server instances.
+// InProcessLockAdapter: default (single-instance deployments, queues concurrent events)
+// RedisDistributedLock: Redis SET NX PX — for horizontally scaled deployments (pnpm add ioredis)
+export {
+  InProcessLockAdapter,
+  RedisDistributedLock,
+} from "./adapters/distributed-lock.js";
+export type {
+  DistributedLockAdapter,
+  LockHandle,
+} from "./adapters/distributed-lock.js";
+
 // Qdrant — vector knowledge base: semantic search over indexed documents (no extra dep)
 // Uses pure REST API — no SDK required. Works with Qdrant OSS and Qdrant Cloud.
 // Activate: QDRANT_URL=http://localhost:6333 (set EMBED_PROVIDER + key for embeddings)
@@ -143,7 +156,12 @@ export type {
 export { BullMQEventAdapter } from "./adapters/redis-event-queue.js";
 export type { BullMQEventAdapterOptions } from "./adapters/redis-event-queue.js";
 
-// WhatsApp — event + delivery adapters for the Kader WhatsApp Gateway
+// EpisodicMemoryAdapter — upgrades memory.search() from keyword to vector similarity.
+// Wraps any MemoryAdapter with a KnowledgeAdapter (Qdrant) for semantic episodic memory.
+// Opt-in: agents without Qdrant use the base adapter's search() unchanged.
+export { EpisodicMemoryAdapter } from "./adapters/episodic-memory.js";
+
+// WhatsApp — event + delivery adapters for the WhatsApp HTTP gateway
 // EventAdapter: receives inbound messages via POST /webhook/whatsapp (built into HTTP server)
 // DeliveryAdapter: sends responses via the gateway's REST API
 // Activate: WHATSAPP_GATEWAY_URL + WHATSAPP_TENANT_ID + WHATSAPP_ACCOUNT_ID
@@ -237,20 +255,27 @@ export type { ServerOptions } from "./server/index.js";
 export {
   ConnectorRegistry,
   EquipmentToolAdapter,
+  createConnectorRegistry,
 } from "./adapters/equipment.js";
 export type {
   ConnectorToolDef,
   ResolvedConnectorConfig,
   ConnectorFactory,
+  ConnectorRegistryLike,
 } from "./adapters/equipment.js";
 // ─── Skills ───────────────────────────────────────────────────
 // Named tool packs — reusable in-process tool bundles.
 // Register with SkillRegistry.register(), activate via '## Skills' in agent definition.
-export { SkillRegistry, SkillToolAdapter } from "./adapters/skills.js";
+export {
+  SkillRegistry,
+  SkillToolAdapter,
+  createSkillRegistry,
+} from "./adapters/skills.js";
 export type {
   SkillToolDef,
   SkillFactory,
   SkillOptions,
+  SkillRegistryLike,
 } from "./adapters/skills.js";
 // ─── Pre-processing Gates ─────────────────────────────────────
 // Zero-LLM filters applied before the brain loop.

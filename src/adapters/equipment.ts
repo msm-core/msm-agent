@@ -66,6 +66,41 @@ export type ConnectorFactory = (
   config: ResolvedConnectorConfig,
 ) => ConnectorToolDef[];
 
+/**
+ * Interface for a connector registry instance.
+ * Matches the shape of the global `ConnectorRegistry` singleton.
+ */
+export interface ConnectorRegistryLike {
+  register(type: string, factory: ConnectorFactory): void;
+  resolve(type: string, config: ResolvedConnectorConfig): ConnectorToolDef[];
+  has(type: string): boolean;
+  types(): string[];
+}
+
+/**
+ * Create an isolated connector registry instance.
+ * Use this instead of the global `ConnectorRegistry` when you need per-agent
+ * or per-test isolation.
+ */
+export function createConnectorRegistry(): ConnectorRegistryLike {
+  const _factories = new Map<string, ConnectorFactory>();
+  return {
+    register(type: string, factory: ConnectorFactory) {
+      _factories.set(type.toLowerCase(), factory);
+    },
+    resolve(type: string, config: ResolvedConnectorConfig): ConnectorToolDef[] {
+      const factory = _factories.get(type.toLowerCase());
+      return factory ? factory(config) : [];
+    },
+    has(type: string) {
+      return _factories.has(type.toLowerCase());
+    },
+    types() {
+      return [..._factories.keys()];
+    },
+  };
+}
+
 // ─── Registry ─────────────────────────────────────────────────
 
 /**
@@ -159,12 +194,13 @@ export class EquipmentToolAdapter implements ToolAdapter {
   private constructor(
     private readonly base: ToolAdapter | null,
     equipment: AgentEquipment,
+    registry: ConnectorRegistryLike = ConnectorRegistry,
   ) {
     this._handlers = new Map();
     const toolDefs: ToolDefinition[] = [];
 
     for (const connDef of equipment.connectors) {
-      if (!ConnectorRegistry.has(connDef.type)) {
+      if (!registry.has(connDef.type)) {
         console.warn(
           `[msm-agent] Equipment: connector "${connDef.type}" is not registered — skipping`,
         );
@@ -172,7 +208,7 @@ export class EquipmentToolAdapter implements ToolAdapter {
       }
 
       const resolved = resolveConnector(connDef);
-      const connTools = ConnectorRegistry.resolve(connDef.type, resolved);
+      const connTools = registry.resolve(connDef.type, resolved);
 
       for (const t of connTools) {
         // Only include operations that are listed in the connector's operations scope
@@ -208,14 +244,18 @@ export class EquipmentToolAdapter implements ToolAdapter {
    * @param equipment Equipment block from AgentDefinition (optional)
    * @param base Optional base ToolAdapter — its tools are listed first and its
    *   execute() is tried before equipment tools.
+   * @param registry Optional registry instance. Defaults to the global ConnectorRegistry.
+   *   Pass a `createConnectorRegistry()` instance for per-agent or test isolation.
    */
   static create(
     equipment: AgentEquipment | undefined,
     base: ToolAdapter | null = null,
+    registry?: ConnectorRegistryLike,
   ): EquipmentToolAdapter {
     return new EquipmentToolAdapter(
       base,
       equipment ?? { connectors: [], channels: [], dedicatedTools: [] },
+      registry,
     );
   }
 

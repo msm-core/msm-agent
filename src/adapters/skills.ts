@@ -64,6 +64,50 @@ export type SkillOptions = Record<string, unknown>;
  */
 export type SkillFactory = (options?: SkillOptions) => SkillToolDef[];
 
+/**
+ * Interface for a skill registry instance.
+ * Matches the shape of the global `SkillRegistry` singleton.
+ */
+export interface SkillRegistryLike {
+  register(name: string, factory: SkillFactory): void;
+  resolve(name: string, options?: SkillOptions): SkillToolDef[];
+  has(name: string): boolean;
+  names(): string[];
+}
+
+/**
+ * Create an isolated skill registry instance.
+ * Use this instead of the global `SkillRegistry` when you need per-agent
+ * or per-test isolation.
+ */
+export function createSkillRegistry(): SkillRegistryLike {
+  const _factories = new Map<string, SkillFactory>();
+  return {
+    register(name: string, factory: SkillFactory) {
+      _factories.set(name.toLowerCase(), factory);
+    },
+    resolve(name: string, options?: SkillOptions): SkillToolDef[] {
+      const factory = _factories.get(name.toLowerCase());
+      if (!factory) return [];
+      try {
+        return factory(options);
+      } catch (err) {
+        console.error(
+          `[msm-agent] SkillRegistry: factory for "${name}" threw — skill tools will be unavailable:`,
+          err,
+        );
+        return [];
+      }
+    },
+    has(name: string) {
+      return _factories.has(name.toLowerCase());
+    },
+    names() {
+      return [..._factories.keys()];
+    },
+  };
+}
+
 // ─── Registry ─────────────────────────────────────────────────
 
 /**
@@ -133,20 +177,21 @@ export class SkillToolAdapter implements ToolAdapter {
     private readonly base: ToolAdapter | null,
     skillNames: string[],
     skillOptions: Record<string, SkillOptions>,
+    registry: SkillRegistryLike = SkillRegistry,
   ) {
     this._handlers = new Map();
     const toolDefs: ToolDefinition[] = [];
 
     for (const skillName of skillNames) {
       const lower = skillName.toLowerCase();
-      if (!SkillRegistry.has(lower)) {
+      if (!registry.has(lower)) {
         console.warn(
           `[msm-agent] Skills: skill "${skillName}" is not registered — skipping`,
         );
         continue;
       }
 
-      const tools = SkillRegistry.resolve(lower, skillOptions[lower]);
+      const tools = registry.resolve(lower, skillOptions[lower]);
       for (const t of tools) {
         toolDefs.push({
           name: t.name,
@@ -170,13 +215,16 @@ export class SkillToolAdapter implements ToolAdapter {
    * @param skillOptions Per-skill option bags keyed by skill name (optional)
    * @param base Optional base ToolAdapter — its tools are listed first and its
    *   execute() is tried before skill tools.
+   * @param registry Optional registry instance. Defaults to the global SkillRegistry.
+   *   Pass a `createSkillRegistry()` instance for per-agent or test isolation.
    */
   static create(
     skillNames: string[],
     skillOptions: Record<string, SkillOptions> = {},
     base: ToolAdapter | null = null,
+    registry?: SkillRegistryLike,
   ): SkillToolAdapter {
-    return new SkillToolAdapter(base, skillNames, skillOptions);
+    return new SkillToolAdapter(base, skillNames, skillOptions, registry);
   }
 
   list(): ToolDefinition[] {

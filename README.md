@@ -388,16 +388,16 @@ For the [msm-ai](https://github.com/msm-core/msm-ai) 6-layer prompt pipeline, wr
 
 The CLI selects adapters automatically from environment variables. For embedded use, import them directly from `"msm-agent"`.
 
-| Adapter                   | Activate via                    | Peer dep                  | Best for                        |
-| ------------------------- | ------------------------------- | ------------------------- | ------------------------------- |
-| `InMemoryAdapter`         | default                         | none                      | Tests, prototypes               |
-| `SQLiteMemoryAdapter`     | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)        | Dev, single-container           |
-| `PostgresMemoryAdapter`   | `DATABASE_URL=postgresql://...` | `pnpm add postgres`       | Production, SQL workloads       |
-| `MongoMemoryAdapter`      | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`        | Production, Atlas Vector Search |
-| `Neo4jMemoryAdapter`      | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver`   | Graph-enriched semantic search  |
-| `RedisControlBus`         | `REDIS_URL=redis://...`         | `pnpm add ioredis`        | Multi-instance control bus      |
-| `BullMQEventAdapter`      | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries    |
-| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`      | none                      | Kader WhatsApp Gateway bridge   |
+| Adapter                   | Activate via                    | Peer dep                  | Best for                           |
+| ------------------------- | ------------------------------- | ------------------------- | ---------------------------------- |
+| `InMemoryAdapter`         | default                         | none                      | Tests, prototypes                  |
+| `SQLiteMemoryAdapter`     | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)        | Dev, single-container              |
+| `PostgresMemoryAdapter`   | `DATABASE_URL=postgresql://...` | `pnpm add postgres`       | Production, SQL workloads          |
+| `MongoMemoryAdapter`      | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`        | Production, Atlas Vector Search    |
+| `Neo4jMemoryAdapter`      | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver`   | Graph-enriched semantic search     |
+| `RedisControlBus`         | `REDIS_URL=redis://...`         | `pnpm add ioredis`        | Multi-instance control bus         |
+| `BullMQEventAdapter`      | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries       |
+| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`      | none                      | WhatsApp delivery via HTTP gateway |
 
 Neo4j wraps any primary adapter as a graph enrichment layer. Failed BullMQ jobs retry 3× with exponential back-off.
 
@@ -998,7 +998,7 @@ legal::sess_abc         ← separate legal session, same suffix
 
 ## 18b. Vector Knowledge Base (Qdrant)
 
-Every agent can be equipped with a vector KB backed by Qdrant — the same approach used by Kader's multi-tenant KB system, adapted for per-agent collections with no SDK dependency (pure REST).
+Every agent can be equipped with a vector KB backed by Qdrant — using per-agent collections with no SDK dependency (pure REST).
 
 **At deploy time — index your documents:**
 
