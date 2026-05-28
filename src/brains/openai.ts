@@ -167,8 +167,19 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
         messages.push({ role: h.role, content: h.content });
       }
 
-      // Inject tool results from last iteration
+      // Inject tool results from last iteration.
+      // Gemini's OpenAI-compat API requires the preceding assistant tool_calls
+      // message to resolve function_response.name — inject a synthetic one.
       if (input.tool_results && input.tool_results.length > 0) {
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: input.tool_results.map((tr) => ({
+            id: tr.tool,
+            type: "function",
+            function: { name: tr.tool, arguments: "{}" },
+          })),
+        } as unknown as OpenAIMessage);
         for (const tr of input.tool_results) {
           messages.push({
             role: "tool",
@@ -289,6 +300,15 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
         messages.push({ role: h.role, content: h.content });
       }
       if (input.tool_results && input.tool_results.length > 0) {
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: input.tool_results.map((tr) => ({
+            id: tr.tool,
+            type: "function",
+            function: { name: tr.tool, arguments: "{}" },
+          })),
+        } as unknown as OpenAIMessage);
         for (const tr of input.tool_results) {
           messages.push({
             role: "tool",
