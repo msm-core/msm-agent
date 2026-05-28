@@ -32,15 +32,18 @@ Done.
 12. [Arabic-Native Routing](#12-arabic-native-routing)
 13. [Sovereign Deployment — Zero Cloud](#13-sovereign-deployment--zero-cloud)
 14. [Deeper Evolving Layer — Signal Decay & Contradiction Detection](#14-deeper-evolving-layer--signal-decay--contradiction-detection)
-15. [Jobs and Missions](#15-jobs-and-missions)
-16. [MCP Server](#16-mcp-server)
-17. [Running as a Microservice](#17-running-as-a-microservice) — [full guide →](docs/DEPLOYMENT.md)
-18. [HTTP API Reference](#18-http-api-reference) — [full reference →](docs/DEPLOYMENT.md#2-http-api-reference)
-19. [Ops Dashboard](#19-ops-dashboard) — [details →](docs/DEPLOYMENT.md#3-ops-dashboard)
-20. [Configuration Reference](#20-configuration-reference) — [full options →](docs/DEPLOYMENT.md#4-configuration-reference)
-21. [Guard System](#21-guard-system) — [reference →](docs/DEPLOYMENT.md#5-guard-system)
-22. [Testing](#22-testing)
-23. [License](#23-license)
+15. [Streaming Responses (SSE)](#15-streaming-responses-sse)
+16. [Episodic Memory](#15b-episodic-memory)
+17. [Distributed Session Locking](#15c-distributed-session-locking)
+18. [Jobs and Missions](#16-jobs-and-missions)
+19. [MCP Server](#17-mcp-server)
+20. [Running as a Microservice](#18-running-as-a-microservice) — [full guide →](docs/DEPLOYMENT.md)
+21. [HTTP API Reference](#19-http-api-reference) — [full reference →](docs/DEPLOYMENT.md#2-http-api-reference)
+22. [Ops Dashboard](#20-ops-dashboard) — [details →](docs/DEPLOYMENT.md#3-ops-dashboard)
+23. [Configuration Reference](#21-configuration-reference) — [full options →](docs/DEPLOYMENT.md#4-configuration-reference)
+24. [Guard System](#22-guard-system) — [reference →](docs/DEPLOYMENT.md#5-guard-system)
+25. [Testing](#23-testing)
+26. [License](#24-license)
 
 ---
 
@@ -823,7 +826,116 @@ Run consolidation periodically (e.g., nightly, alongside `refreshStrategies()` o
 
 ---
 
-## 15. Jobs and Missions
+## 15. Streaming Responses (SSE)
+
+Every HTTP endpoint supports Server-Sent Events. Add `Accept: text/event-stream` to any request and the agent streams tokens to the client as they arrive — first token in < 1 second instead of waiting for the full response.
+
+```bash
+curl -N http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"message": "What is our refund policy?"}'
+```
+
+**Stream event format:**
+
+```
+data: {"type":"delta","text":"Our"}
+data: {"type":"delta","text":" refund policy"}
+data: {"type":"delta","text":" allows..."}
+data: {"type":"done","sessionId":"sess_abc","outcome":{"type":"response",...}}
+```
+
+| Event type | Payload                         | When                                   |
+| ---------- | ------------------------------- | -------------------------------------- |
+| `delta`    | `{ type, text }`                | Each token chunk from the brain        |
+| `done`     | `{ type, sessionId?, outcome }` | Full `LoopOutcome` when loop completes |
+| `error`    | `{ type, error }`               | If the loop throws                     |
+
+Works on `/v1/event` and `/chat`. Requires an OpenAI or Anthropic brain (both implement `Brain.stream()`). Falls back to normal JSON response if the brain does not support streaming.
+
+**Programmatic usage:**
+
+```typescript
+const outcome = await agent.streamEvent(event, (delta) => {
+  process.stdout.write(delta);
+});
+```
+
+---
+
+## 15b. Episodic Memory
+
+Episodic memory lets the agent learn from past interactions using semantic search instead of keyword matching.
+
+**How it works:**
+
+1. `memory.store()` calls optionally embed and index each memory entry into a separate Qdrant collection (`{agentName}_episodic`)
+2. On every new turn, `memory.search()` retrieves the most semantically similar past interactions
+3. Retrieved memories are injected into the brain's system prompt automatically
+
+**Enable via CLI:**
+
+```bash
+# Same Qdrant instance used for KB — episodic index uses a separate collection
+QDRANT_URL=http://localhost:6333 \
+EMBED_PROVIDER=openai \
+OPENAI_API_KEY=... \
+node dist/server/cli.js
+```
+
+**Programmatic opt-in:**
+
+```typescript
+import {
+  EpisodicMemoryAdapter,
+  SqliteMemoryAdapter,
+  QdrantKnowledgeAdapter,
+} from "msm-agent";
+
+const memory = new EpisodicMemoryAdapter(
+  new SqliteMemoryAdapter({ path: "./agent.db" }),
+  qdrantKnowledgeAdapter, // optional — enables semantic search
+);
+```
+
+Without Qdrant, episodic memory falls back to standard LIKE-based keyword search (backward compatible).
+
+---
+
+## 15c. Distributed Session Locking
+
+By default, `createAgent()` uses an in-process mutex to serialize events per session. For multi-instance deployments (multiple Node processes or containers), replace it with the Redis distributed lock to prevent race conditions on shared session state.
+
+```typescript
+import { createAgent, RedisDistributedLock } from "msm-agent";
+
+const agent = createAgent({
+  lock: new RedisDistributedLock({
+    host: process.env.REDIS_HOST,
+    port: 6379,
+  }),
+  ...adapters,
+});
+```
+
+**Via CLI:**
+
+```bash
+REDIS_URL=redis://localhost:6379 node dist/server/cli.js
+# → RedisDistributedLock activated automatically when REDIS_URL is set
+```
+
+**How it works:** Uses Redis `SET NX PX` (atomic) with auto-extend heartbeat. If a second event arrives for the same session while one is in-flight, it either queues (within TTL) or returns a 409 Conflict. Prevents duplicate task creation and memory corruption under load.
+
+| Adapter                | Use case                            |
+| ---------------------- | ----------------------------------- |
+| `InProcessLockAdapter` | Single instance (default)           |
+| `RedisDistributedLock` | Multi-instance / horizontal scaling |
+
+---
+
+## 16. Jobs and Missions
 
 For long-running stateful workflows that span multiple interactions or run on a schedule, use the Jobs API.
 
@@ -862,7 +974,7 @@ GET  /jobs            → list all jobs (filterable by status, sessionId)
 
 ---
 
-## 16. MCP Server
+## 17. MCP Server
 
 Expose the agent as an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server so any MCP client — Claude Desktop, Cursor, custom AI tools — can call it as a tool provider.
 
@@ -904,7 +1016,7 @@ await mcp.stop();
 
 ---
 
-## 17. Running as a Microservice
+## 18. Running as a Microservice
 
 The CLI boots an HTTP server from any `.md` or `.it` definition file. Adapters wire automatically from environment variables — no code changes needed.
 
@@ -964,7 +1076,7 @@ legal::sess_abc         ← separate legal session, same suffix
 
 ---
 
-## 18. HTTP API Reference
+## 19. HTTP API Reference
 
 **Single-agent mode:**
 
@@ -1060,7 +1172,7 @@ node dist/server/cli.js
 
 ---
 
-## 19. Ops Dashboard
+## 20. Ops Dashboard
 
 When `DASHBOARD_PASSWORD` is set, a built-in ops panel is available at `GET /dashboard`. Panels: pending approvals, control bus commands, memory search, session inspector. No external CDN or build step.
 
@@ -1068,7 +1180,7 @@ When `DASHBOARD_PASSWORD` is set, a built-in ops panel is available at `GET /das
 
 ---
 
-## 20. Configuration Reference
+## 21. Configuration Reference
 
 Key `createAgent()` options: `brain`, `memory`, `tools`, `events`, `delivery`, plus `controlBus`, `evolving`, `gates`, `preHook`, `compactHistory`, `costExtractor`, `onIteration`, `onGuard`, `onPlanCreated`, `onFatalError`, `onInjectionDetected`.
 
@@ -1078,7 +1190,7 @@ Loop config defaults: `maxIterations: 6`, `maxReplans: 2`, `confidenceThreshold:
 
 ---
 
-## 21. Guard System
+## 22. Guard System
 
 Hard guards abort execution (iteration budget, cost cap, timeout, confidence gate, task killed, tenant paused, rate limited, tool disabled). Soft guards emit advisory signals to `onGuard` (repetition, dead-end).
 
@@ -1086,7 +1198,7 @@ Hard guards abort execution (iteration budget, cost cap, timeout, confidence gat
 
 ---
 
-## 22. Testing
+## 23. Testing
 
 ```bash
 pnpm test
@@ -1115,7 +1227,7 @@ pnpm test
 
 ---
 
-## 23. License
+## 24. License
 
 MIT
 
