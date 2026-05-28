@@ -51,6 +51,13 @@ export interface PromptInput {
    * "premium" gets a larger budget (180K tokens vs 120K for standard).
    */
   qualityTier?: "standard" | "premium";
+  /**
+   * Pre-assembled agent context from buildContext().
+   * Contains task state, KB hits, episodic memories, equipment block, and
+   * evolving hints. When provided, injected between L4 and L5 so all brains
+   * receive the same dynamic runtime context regardless of promptBuilder.
+   */
+  agentContext?: string;
 }
 
 export interface PromptResult {
@@ -190,6 +197,7 @@ export function buildPrompt(input: PromptInput): PromptResult {
     memoryLines = [],
     currentMessage,
     qualityTier,
+    agentContext,
   } = input;
 
   const registry = new SectionRegistry();
@@ -241,6 +249,18 @@ export function buildPrompt(input: PromptInput): PromptResult {
     buildLayer4(memoryLines),
     30,
   );
+
+  // L4.5 — Agent runtime context (volatile — task state, KB hits, memories, etc.)
+  // Assembled by buildContext() and threaded here so all brain types get it.
+  if (agentContext) {
+    registry.add(
+      "layer4_agent_context",
+      "Agent Runtime Context",
+      "volatile",
+      agentContext,
+      29,
+    );
+  }
 
   // L5 — Format user prompt (not added to registry — goes in messages array)
   const userPrompt = buildLayer5(currentMessage, injectionDetected);

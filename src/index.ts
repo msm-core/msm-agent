@@ -22,9 +22,11 @@ export type {
   AgentHandle,
   Brain,
   BrainPayload,
+  BrainRunInput,
   BrainOrchestration,
   BrainGeneration,
   BrainFinalOutput,
+  StreamChunk,
   ToolResult,
   PlanStep,
   OrchestrationAction,
@@ -72,7 +74,7 @@ export type { FlushGateOptions } from "./core/flush-gate.js";
 
 // ─── Context Builder ─────────────────────────────────────────
 export { buildContext } from "./core/context.js";
-export type { BrainInput, ContextOptions } from "./core/context.js";
+export type { ContextOptions } from "./core/context.js";
 // ─── Output Sanitization ─────────────────────────────────
 export { sanitizeOutput, containsSensitiveData } from "./core/sanitize.js";
 export type { SanitizeResult } from "./core/sanitize.js";

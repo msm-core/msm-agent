@@ -215,18 +215,51 @@ export interface RunState {
 // ─── Brain Interface ─────────────────────────────────────────
 
 /**
+ * Runtime context assembled by buildContext() and passed to every brain call.
+ * All fields beyond `raw` are optional so custom brains can ignore them.
+ */
+export interface BrainRunInput {
+  raw: string;
+  modality: "text" | "voice" | "image";
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
+  tool_results?: ToolResult[];
+  /**
+   * Pre-assembled dynamic context: task state, KB hits, episodic memories,
+   * equipment block, and evolving hints. Provided to all brain calls by the
+   * loop — promptBuilder-based brains should thread this into their system prompt.
+   */
+  system_context?: string;
+}
+
+/**
+ * A single streaming chunk from Brain.stream().
+ *
+ *  - delta:     incremental text token (stream to UI as soon as received)
+ *  - tool_call: brain decided to call a tool (loop will execute it)
+ *  - done:      stream finished; payload is the full BrainPayload equivalent
+ */
+export type StreamChunk =
+  | { type: "delta"; text: string }
+  | { type: "tool_call"; name: string; params: Record<string, unknown> }
+  | { type: "done"; payload: BrainPayload };
+
+/**
  * The brain decides, the agent executes.
  *
  * Any decision engine satisfies this interface — MSM pipeline, raw LLM wrapper,
  * rule engine, or any custom brain. Use the bridge adapter for MSM integration.
  */
 export interface Brain {
-  run(input: {
-    raw: string;
-    modality: "text" | "voice" | "image";
-    history?: Array<{ role: "user" | "assistant"; content: string }>;
-    tool_results?: ToolResult[];
-  }): Promise<BrainPayload>;
+  run(input: BrainRunInput): Promise<BrainPayload>;
+  /**
+   * Optional streaming variant. When implemented, the loop uses this instead
+   * of run() when an onTextDelta callback is set — enabling live token delivery
+   * to the client via SSE before the full response is ready.
+   *
+   * Must yield delta chunks first, then exactly one done chunk with the
+   * full BrainPayload. The loop consumes it and handles tool execution normally.
+   */
+  stream?(input: BrainRunInput): AsyncIterable<StreamChunk>;
 }
 
 // ─── Guard Signals ───────────────────────────────────────────
@@ -312,6 +345,16 @@ export type LoopOutcome =
 export interface AgentHandle {
   /** Process a single event and return the outcome */
   handleEvent(event: AgentEvent): Promise<LoopOutcome>;
+  /**
+   * Process an event with streaming brain output.
+   * `onDelta` is called for each incremental text token as the brain produces it.
+   * Requires the configured brain to implement Brain.stream().
+   * Falls back to handleEvent (no streaming) when the brain doesn't support it.
+   */
+  streamEvent(
+    event: AgentEvent,
+    onDelta: (delta: string) => void,
+  ): Promise<LoopOutcome>;
   /** Start listening for events (EventAdapter.start()) */
   start(): Promise<void>;
   /** Stop listening for events */

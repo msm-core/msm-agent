@@ -11,7 +11,13 @@
  * Required env: ANTHROPIC_API_KEY
  */
 
-import type { Brain, BrainPayload, PlanStep } from "../core/types.js";
+import type {
+  Brain,
+  BrainPayload,
+  BrainRunInput,
+  PlanStep,
+  StreamChunk,
+} from "../core/types.js";
 import type { ToolDefinition } from "../adapters/tools.js";
 import { STANDARD_ACTIONS } from "../core/types.js";
 import { AGENT_META_TOOL, resolveAgentMeta } from "./agent-meta.js";
@@ -233,5 +239,177 @@ export function createAnthropicBrain(opts: AnthropicBrainOptions): Brain {
         final_output: { text, language: "en" },
       };
     },
+
+    async *stream(input: BrainRunInput): AsyncIterable<StreamChunk> {
+      const systemContent = opts.promptBuilder
+        ? opts.promptBuilder(input)
+        : opts.systemPrompt;
+
+      const messages: AnthropicMessage[] = [];
+      for (const h of input.history ?? []) {
+        messages.push({ role: h.role, content: h.content });
+      }
+      if (input.tool_results && input.tool_results.length > 0) {
+        const toolResults: AnthropicContent[] = input.tool_results.map(
+          (tr) => ({
+            type: "tool_result",
+            tool_use_id: tr.tool,
+            content: JSON.stringify(tr.result),
+          }),
+        );
+        messages.push({ role: "user", content: toolResults });
+      }
+      messages.push({ role: "user", content: input.raw });
+
+      const allTools = [...(opts.tools ?? []), AGENT_META_TOOL];
+      const body: Record<string, unknown> = {
+        model: opts.model,
+        max_tokens: opts.maxTokens ?? 1024,
+        system: systemContent,
+        messages,
+        stream: true,
+        tools: allTools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: {
+            type: "object",
+            properties: Object.fromEntries(
+              Object.entries(t.parameters).map(([name, p]) => [
+                name,
+                { type: p.type, description: p.description },
+              ]),
+            ),
+            required: Object.entries(t.parameters)
+              .filter(([, p]) => p.required)
+              .map(([name]) => name),
+          },
+        })),
+      };
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": opts.apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Anthropic stream error ${res.status}: ${errText}`);
+      }
+
+      let accumulated = "";
+      let toolName = "";
+      let toolInput = "";
+      let toolUseId = "";
+
+      for await (const line of readAnthropicSSELines(res.body)) {
+        if (!line.startsWith("data: ")) continue;
+        let event: {
+          type?: string;
+          delta?: { type?: string; text?: string; partial_json?: string };
+          content_block?: { type?: string; name?: string; id?: string };
+        };
+        try {
+          event = JSON.parse(line.slice(6)) as typeof event;
+        } catch {
+          continue;
+        }
+        if (event.type === "content_block_start" && event.content_block) {
+          if (event.content_block.type === "tool_use") {
+            toolName = event.content_block.name ?? "";
+            toolUseId = event.content_block.id ?? "";
+          }
+        } else if (event.type === "content_block_delta" && event.delta) {
+          if (event.delta.type === "text_delta" && event.delta.text) {
+            accumulated += event.delta.text;
+            yield { type: "delta", text: event.delta.text };
+          } else if (
+            event.delta.type === "input_json_delta" &&
+            event.delta.partial_json
+          ) {
+            toolInput += event.delta.partial_json;
+          }
+        } else if (event.type === "message_stop") {
+          break;
+        }
+      }
+
+      if (toolName) {
+        let params: Record<string, unknown> = {};
+        try {
+          params = JSON.parse(toolInput) as Record<string, unknown>;
+        } catch {
+          /* leave empty */
+        }
+
+        if (toolName === "agent_meta") {
+          const resolved = resolveAgentMeta(
+            String(params["action"] ?? ""),
+            String(params["message"] ?? ""),
+          );
+          if (resolved) {
+            yield { type: "tool_call", name: toolName, params };
+            yield { type: "done", payload: resolved };
+            return;
+          }
+        }
+
+        yield { type: "tool_call", name: toolName, params };
+        yield {
+          type: "done",
+          payload: {
+            orchestration: {
+              action: STANDARD_ACTIONS.USE_TOOL,
+              confidence: 0.9,
+              tool_name: toolName,
+              tool_params: params,
+            },
+          },
+        };
+      } else {
+        yield {
+          type: "done",
+          payload: {
+            orchestration: {
+              action: STANDARD_ACTIONS.RESPOND,
+              confidence: 0.95,
+            },
+            generation: { response_text: accumulated },
+            final_output: { text: accumulated, language: "en" },
+          },
+        };
+      }
+      void toolUseId;
+    },
   };
+}
+
+/** Read Server-Sent Event lines from an Anthropic streaming response body. */
+async function* readAnthropicSSELines(
+  body: ReadableStream<Uint8Array> | null,
+): AsyncIterable<string> {
+  if (!body) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) yield line;
+      }
+    }
+    if (buffer.trim()) yield buffer;
+  } finally {
+    reader.releaseLock();
+  }
 }

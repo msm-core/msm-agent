@@ -12,7 +12,13 @@
  * Optional env: OPENAI_BASE_URL (for proxies or Azure OpenAI)
  */
 
-import type { Brain, BrainPayload, PlanStep } from "../core/types.js";
+import type {
+  Brain,
+  BrainPayload,
+  BrainRunInput,
+  PlanStep,
+  StreamChunk,
+} from "../core/types.js";
 import type { ToolDefinition } from "../adapters/tools.js";
 import { STANDARD_ACTIONS } from "../core/types.js";
 import { AGENT_META_TOOL, resolveAgentMeta } from "./agent-meta.js";
@@ -271,5 +277,181 @@ export function createOpenAIBrain(opts: OpenAIBrainOptions): Brain {
         final_output: { text, language: "en" },
       };
     },
+
+    async *stream(input: BrainRunInput): AsyncIterable<StreamChunk> {
+      const systemContent = opts.promptBuilder
+        ? opts.promptBuilder(input)
+        : opts.systemPrompt;
+      const messages: OpenAIMessage[] = [
+        { role: "system", content: systemContent },
+      ];
+      for (const h of input.history ?? []) {
+        messages.push({ role: h.role, content: h.content });
+      }
+      if (input.tool_results && input.tool_results.length > 0) {
+        for (const tr of input.tool_results) {
+          messages.push({
+            role: "tool",
+            content: JSON.stringify(tr.result),
+            tool_call_id: tr.tool,
+          });
+        }
+      }
+      messages.push({ role: "user", content: input.raw });
+
+      const allTools = [...(opts.tools ?? []), AGENT_META_TOOL];
+      const body: Record<string, unknown> = {
+        model: opts.model,
+        messages,
+        temperature: opts.temperature ?? 0.3,
+        stream: true,
+        tools: allTools.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: {
+              type: "object",
+              properties: Object.fromEntries(
+                Object.entries(t.parameters).map(([name, p]) => [
+                  name,
+                  { type: p.type, description: p.description },
+                ]),
+              ),
+              required: Object.entries(t.parameters)
+                .filter(([, p]) => p.required)
+                .map(([name]) => name),
+            },
+          },
+        })),
+        tool_choice: "auto",
+      };
+
+      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${opts.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`OpenAI stream error ${res.status}: ${errText}`);
+      }
+
+      let accumulated = "";
+      let toolName = "";
+      let toolArgs = "";
+      let toolId = "";
+
+      for await (const line of readSSELines(res.body)) {
+        if (line === "data: [DONE]") break;
+        if (!line.startsWith("data: ")) continue;
+        let data: {
+          choices?: Array<{
+            delta?: {
+              content?: string;
+              tool_calls?: Array<{
+                id?: string;
+                function?: { name?: string; arguments?: string };
+              }>;
+            };
+          }>;
+        };
+        try {
+          data = JSON.parse(line.slice(6)) as typeof data;
+        } catch {
+          continue;
+        }
+        const delta = data.choices?.[0]?.delta;
+        if (!delta) continue;
+        if (delta.content) {
+          accumulated += delta.content;
+          yield { type: "delta", text: delta.content };
+        }
+        const tc = delta.tool_calls?.[0];
+        if (tc) {
+          if (tc.id) toolId = tc.id;
+          if (tc.function?.name) toolName += tc.function.name;
+          if (tc.function?.arguments) toolArgs += tc.function.arguments;
+        }
+      }
+
+      if (toolName) {
+        let params: Record<string, unknown> = {};
+        try {
+          params = JSON.parse(toolArgs) as Record<string, unknown>;
+        } catch {
+          /* leave empty */
+        }
+
+        // agent_meta signals
+        if (toolName === "agent_meta") {
+          const resolved = resolveAgentMeta(
+            String(params["action"] ?? ""),
+            String(params["message"] ?? ""),
+          );
+          if (resolved) {
+            yield { type: "tool_call", name: toolName, params };
+            yield { type: "done", payload: resolved };
+            return;
+          }
+        }
+
+        yield { type: "tool_call", name: toolName, params };
+        yield {
+          type: "done",
+          payload: {
+            orchestration: {
+              action: STANDARD_ACTIONS.USE_TOOL,
+              confidence: 0.9,
+              tool_name: toolName,
+              tool_params: params,
+            },
+          },
+        };
+      } else {
+        yield {
+          type: "done",
+          payload: {
+            orchestration: {
+              action: STANDARD_ACTIONS.RESPOND,
+              confidence: 0.95,
+            },
+            generation: { response_text: accumulated },
+            final_output: { text: accumulated, language: "en" },
+          },
+        };
+      }
+      void toolId; // used in request, acknowledged here
+    },
   };
+}
+
+/** Read Server-Sent Event lines from a fetch Response body. */
+async function* readSSELines(
+  body: ReadableStream<Uint8Array> | null,
+): AsyncIterable<string> {
+  if (!body) return;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) yield line;
+      }
+    }
+    if (buffer.trim()) yield buffer;
+  } finally {
+    reader.releaseLock();
+  }
 }

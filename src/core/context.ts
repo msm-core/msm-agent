@@ -10,19 +10,16 @@
  *  - Tool results from previous iterations are passed back
  */
 
-import type { ToolResult, Message, RunState, TaskState } from "./types.js";
+import type {
+  ToolResult,
+  Message,
+  RunState,
+  TaskState,
+  BrainRunInput,
+} from "./types.js";
 import type { MemoryAdapter, MemoryEntry } from "../adapters/memory.js";
 import type { ToolAdapter } from "../adapters/tools.js";
 import type { KnowledgeAdapter } from "../adapters/knowledge.js";
-
-export interface BrainInput {
-  raw: string;
-  modality: "text" | "voice" | "image";
-  history: Array<{ role: "user" | "assistant"; content: string }>;
-  tool_results?: ToolResult[];
-  /** Assembled system context: task state, semantic memories, tool catalog */
-  system_context?: string;
-}
 
 export interface ContextOptions {
   sessionId: string;
@@ -73,7 +70,7 @@ export interface ContextOptions {
  */
 export async function buildContext(
   options: ContextOptions,
-): Promise<BrainInput> {
+): Promise<BrainRunInput> {
   const { sessionId, text, modality, memory, state, lastToolResult, task } =
     options;
 
@@ -167,7 +164,7 @@ export async function buildContext(
   }
 
   // Build brain input
-  const input: BrainInput = {
+  const input: BrainRunInput = {
     raw: text,
     modality,
     history,

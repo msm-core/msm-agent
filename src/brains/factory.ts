@@ -49,6 +49,7 @@ export function buildDirectBrain(
       memoryLines: options.memoryContext
         ? options.memoryContext(input.raw)
         : [],
+      agentContext: input.system_context,
       currentMessage: input.raw,
       qualityTier: "standard",
     }).systemPrompt;
@@ -129,6 +130,7 @@ export function buildArabicBrain(
       memoryLines: options.memoryContext
         ? options.memoryContext(input.raw)
         : [],
+      agentContext: input.system_context,
       currentMessage: input.raw,
       qualityTier: "standard",
     }).systemPrompt;

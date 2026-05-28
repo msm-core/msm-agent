@@ -309,6 +309,29 @@ async function handleEvent(
     return;
   }
 
+  // SSE streaming path — activated when client sends Accept: text/event-stream
+  const wantsSSE = req.headers["accept"]?.includes("text/event-stream");
+  if (wantsSSE) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    try {
+      const outcome = await agent.streamEvent(event, (delta) => {
+        res.write(
+          `data: ${JSON.stringify({ type: "delta", text: delta })}\n\n`,
+        );
+      });
+      res.write(`data: ${JSON.stringify({ type: "done", outcome })}\n\n`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.write(`data: ${JSON.stringify({ type: "error", error: msg })}\n\n`);
+    }
+    res.end();
+    return;
+  }
+
   // Job budget enforcement — apply when a jobs adapter is configured and the
   // event carries a sessionId (all event types except "cron" do).
   if (jobs && "sessionId" in event && typeof event.sessionId === "string") {
@@ -394,6 +417,31 @@ async function handleChat(
         ? parsed.modality
         : "text",
   };
+
+  // SSE streaming path for /chat
+  const wantsSSEChat = req.headers["accept"]?.includes("text/event-stream");
+  if (wantsSSEChat) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    try {
+      const outcome = await agent.streamEvent(event, (delta) => {
+        res.write(
+          `data: ${JSON.stringify({ type: "delta", text: delta })}\n\n`,
+        );
+      });
+      res.write(
+        `data: ${JSON.stringify({ type: "done", sessionId, outcome })}\n\n`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.write(`data: ${JSON.stringify({ type: "error", error: msg })}\n\n`);
+    }
+    res.end();
+    return;
+  }
 
   let outcome: LoopOutcome;
   try {

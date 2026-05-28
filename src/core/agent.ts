@@ -162,6 +162,7 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
   async function processEvent(
     event: AgentEvent,
     sessionId = resolveSessionId(event),
+    onDelta?: (delta: string) => void,
   ): Promise<LoopOutcome> {
     const SESSION_LOCK_TTL_MS = 5 * 60 * 1000; // 5 min max per event
     const handle = await lock.acquire(sessionId, SESSION_LOCK_TTL_MS);
@@ -200,11 +201,12 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
           .catch(() => []);
       }
 
-      const outcome = await executeEvent(
-        event,
-        evolvingHints.length > 0 ? { ...deps, evolvingHints } : deps,
-        sessionId,
-      );
+      const baseDeps =
+        evolvingHints.length > 0 ? { ...deps, evolvingHints } : deps;
+      const loopDeps = onDelta
+        ? { ...baseDeps, onTextDelta: onDelta }
+        : baseDeps;
+      const outcome = await executeEvent(event, loopDeps, sessionId);
 
       // Evolving post-outcome: record what happened (shadow + assist modes)
       if (options.evolving && event.type === "user_message") {
@@ -241,6 +243,13 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
   return {
     async handleEvent(event: AgentEvent): Promise<LoopOutcome> {
       return processEvent(event);
+    },
+
+    async streamEvent(
+      event: AgentEvent,
+      onDelta: (delta: string) => void,
+    ): Promise<LoopOutcome> {
+      return processEvent(event, resolveSessionId(event), onDelta);
     },
 
     async start(): Promise<void> {

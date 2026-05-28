@@ -28,6 +28,7 @@ import type {
   AgentConfig,
   Brain,
   BrainPayload,
+  BrainRunInput,
   LoopOutcome,
   RunState,
   StepResult,
@@ -123,6 +124,13 @@ export interface LoopDeps {
    * Set via createAgent({ knowledge: QdrantKnowledgeAdapter.create(...) })
    */
   knowledge?: import("../adapters/knowledge.js").KnowledgeAdapter;
+  /**
+   * Optional: streaming text delta callback.
+   * When set AND the brain implements stream(), the loop calls stream() instead
+   * of run() and invokes this callback for every incremental text token.
+   * Used by the HTTP layer to forward SSE chunks to the client in real time.
+   */
+  onTextDelta?: (delta: string) => void;
 }
 
 /**
@@ -348,7 +356,23 @@ export async function executeEvent(
     let payload: BrainPayload;
     const startMs = Date.now();
     try {
-      payload = await deps.brain.run(brainInput);
+      // Use streaming when the brain supports it AND the caller wants deltas
+      if (deps.onTextDelta && deps.brain.stream) {
+        const stream = deps.brain.stream(brainInput);
+        let done: BrainPayload | undefined;
+        for await (const chunk of stream) {
+          if (chunk.type === "delta") {
+            deps.onTextDelta(chunk.text);
+          } else if (chunk.type === "done") {
+            done = chunk.payload;
+            break;
+          }
+        }
+        if (!done) throw new Error("Brain stream ended without a done chunk");
+        payload = done;
+      } else {
+        payload = await deps.brain.run(brainInput);
+      }
     } catch (err) {
       // Brain call failed — failTask lifecycle instead of unhandled crash
       const error = err instanceof Error ? err.message : String(err);
