@@ -19,6 +19,7 @@ import type {
   LoopOutcome,
   GuardSignal,
   Message,
+  NemoLike,
 } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
 import type { MemoryAdapter } from "../adapters/memory.js";
@@ -132,6 +133,18 @@ export interface CreateAgentOptions {
    *   createAgent({ brain, memory, tools, ..., distributedLock: lock });
    */
   distributedLock?: DistributedLockAdapter;
+  /**
+   * Optional: fast pre-classifier (e.g. nemo-ai).
+   * When provided it runs on every user_message before the brain loop:
+   *   1. field + confidence are injected as an evolving hint so the brain
+   *      receives a cheap classification prior without extra token cost.
+   *   2. On a terminal "response" outcome the result is reinforced via teach()
+   *      enabling continuous self-improvement without retraining.
+   *
+   * gate === "skip_llm" is advisory here — pair it with preHook to fully
+   * short-circuit the brain loop when you also have a deterministic response.
+   */
+  nemo?: NemoLike;
 }
 
 export function createAgent(options: CreateAgentOptions): AgentHandle {
@@ -175,6 +188,12 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
       };
     }
     try {
+      // Nemo: fast pre-classification — runs once per user_message
+      let nemoResult: ReturnType<NemoLike["run"]> | undefined;
+      if (options.nemo && event.type === "user_message") {
+        nemoResult = options.nemo.run(event.text);
+      }
+
       // Pre-processing gates: zero-LLM filters (ack suppression, business hours)
       if (event.type === "user_message" && options.gates) {
         const gateOutcome = checkGates(event.text, options.gates);
@@ -201,12 +220,25 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
           .catch(() => []);
       }
 
+      // Nemo hint: prepend field + confidence as a brain prompt prior
+      if (nemoResult) {
+        evolvingHints = [
+          `fast-classifier: field=${nemoResult.field} confidence=${nemoResult.confidence.toFixed(2)} gate=${nemoResult.gate}`,
+          ...evolvingHints,
+        ];
+      }
+
       const baseDeps =
         evolvingHints.length > 0 ? { ...deps, evolvingHints } : deps;
       const loopDeps = onDelta
         ? { ...baseDeps, onTextDelta: onDelta }
         : baseDeps;
       const outcome = await executeEvent(event, loopDeps, sessionId);
+
+      // Nemo teach: reinforce field on successful terminal responses
+      if (options.nemo && nemoResult && outcome.type === "response") {
+        options.nemo.teach(event.text, nemoResult.field);
+      }
 
       // Evolving post-outcome: record what happened (shadow + assist modes)
       if (options.evolving && event.type === "user_message") {

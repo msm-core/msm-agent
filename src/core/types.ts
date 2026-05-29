@@ -13,6 +13,23 @@
  * by returning a BrainPayload. For MSM integration, use the bridge adapter.
  */
 
+// ─── Nemo Integration (optional fast pre-classifier) ─────────
+
+/**
+ * Minimal contract for a fast pre-classifier such as nemo-ai.
+ * Duck-typed — the nemo package is NOT imported here so msm-agent stays
+ * zero-dependency at runtime.
+ *
+ * run()   → field (one of nemo's 42 semantic fields), confidence 0–1,
+ *           gate: "skip_llm" | "llm_assist" | "full_llm"
+ * teach() → reinforce a confirmed field after a successful outcome
+ *           (enables continuous self-improvement without retraining)
+ */
+export interface NemoLike {
+  run(text: string): { field: string; confidence: number; gate: string };
+  teach(text: string, field: string, meta?: Record<string, unknown>): void;
+}
+
 // ─── Brain Protocol Types (agent-owned) ──────────────────────
 
 /** Result of a tool execution (tool name + status + result data) */

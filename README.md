@@ -29,21 +29,22 @@ Done.
 9. [Skills — Reusable In-Process Tool Packs](#9-skills--reusable-in-process-tool-packs)
 10. [Pre-Processing Gates](#10-pre-processing-gates)
 11. [Quality Scoring and Self-Improvement](#11-quality-scoring-and-self-improvement)
-12. [Arabic-Native Routing](#12-arabic-native-routing)
-13. [Sovereign Deployment — Zero Cloud](#13-sovereign-deployment--zero-cloud)
-14. [Deeper Evolving Layer — Signal Decay & Contradiction Detection](#14-deeper-evolving-layer--signal-decay--contradiction-detection)
-15. [Streaming Responses (SSE)](#15-streaming-responses-sse)
-16. [Episodic Memory](#15b-episodic-memory)
-17. [Distributed Session Locking](#15c-distributed-session-locking)
-18. [Jobs and Missions](#16-jobs-and-missions)
-19. [MCP Server](#17-mcp-server)
-20. [Running as a Microservice](#18-running-as-a-microservice) — [full guide →](docs/DEPLOYMENT.md)
-21. [HTTP API Reference](#19-http-api-reference) — [full reference →](docs/DEPLOYMENT.md#2-http-api-reference)
-22. [Ops Dashboard](#20-ops-dashboard) — [details →](docs/DEPLOYMENT.md#3-ops-dashboard)
-23. [Configuration Reference](#21-configuration-reference) — [full options →](docs/DEPLOYMENT.md#4-configuration-reference)
-24. [Guard System](#22-guard-system) — [reference →](docs/DEPLOYMENT.md#5-guard-system)
-25. [Testing](#23-testing)
-26. [License](#24-license)
+12. [Nemo — Fast Pre-Classifier (optional)](#12-nemo--fast-pre-classifier-optional)
+13. [Arabic-Native Routing](#13-arabic-native-routing)
+14. [Sovereign Deployment — Zero Cloud](#13-sovereign-deployment--zero-cloud)
+15. [Deeper Evolving Layer — Signal Decay & Contradiction Detection](#14-deeper-evolving-layer--signal-decay--contradiction-detection)
+16. [Streaming Responses (SSE)](#15-streaming-responses-sse)
+17. [Episodic Memory](#15b-episodic-memory)
+18. [Distributed Session Locking](#15c-distributed-session-locking)
+19. [Jobs and Missions](#16-jobs-and-missions)
+20. [MCP Server](#17-mcp-server)
+21. [Running as a Microservice](#18-running-as-a-microservice) — [full guide →](docs/DEPLOYMENT.md)
+22. [HTTP API Reference](#19-http-api-reference) — [full reference →](docs/DEPLOYMENT.md#2-http-api-reference)
+23. [Ops Dashboard](#20-ops-dashboard) — [details →](docs/DEPLOYMENT.md#3-ops-dashboard)
+24. [Configuration Reference](#21-configuration-reference) — [full options →](docs/DEPLOYMENT.md#4-configuration-reference)
+25. [Guard System](#22-guard-system) — [reference →](docs/DEPLOYMENT.md#5-guard-system)
+26. [Testing](#23-testing)
+27. [License](#24-license)
 
 ---
 
@@ -389,16 +390,17 @@ For the [msm-ai](https://github.com/msm-core/msm-ai) 6-layer prompt pipeline, wr
 
 The CLI selects adapters automatically from environment variables. For embedded use, import them directly from `"msm-agent"`.
 
-| Adapter                   | Activate via                    | Peer dep                  | Best for                           |
-| ------------------------- | ------------------------------- | ------------------------- | ---------------------------------- |
-| `InMemoryAdapter`         | default                         | none                      | Tests, prototypes                  |
-| `SQLiteMemoryAdapter`     | `MEMORY_PATH=/data/agent.db`    | none (Node.js 22+)        | Dev, single-container              |
-| `PostgresMemoryAdapter`   | `DATABASE_URL=postgresql://...` | `pnpm add postgres`       | Production, SQL workloads          |
-| `MongoMemoryAdapter`      | `DATABASE_URL=mongodb://...`    | `pnpm add mongodb`        | Production, Atlas Vector Search    |
-| `Neo4jMemoryAdapter`      | `NEO4J_URL=bolt://...`          | `pnpm add neo4j-driver`   | Graph-enriched semantic search     |
-| `RedisControlBus`         | `REDIS_URL=redis://...`         | `pnpm add ioredis`        | Multi-instance control bus         |
-| `BullMQEventAdapter`      | manual / `pnpm add bullmq`      | `pnpm add bullmq ioredis` | Durable queue, cron, retries       |
-| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`      | none                      | WhatsApp delivery via HTTP gateway |
+| Adapter                   | Activate via                                | Peer dep                  | Best for                              |
+| ------------------------- | ------------------------------------------- | ------------------------- | ------------------------------------- |
+| `InMemoryAdapter`         | default                                     | none                      | Tests, prototypes                     |
+| `SQLiteMemoryAdapter`     | `MEMORY_PATH=/data/agent.db`                | none (Node.js 22+)        | Dev, single-container                 |
+| `PostgresMemoryAdapter`   | `DATABASE_URL=postgresql://...`             | `pnpm add postgres`       | Production, SQL workloads             |
+| `MongoMemoryAdapter`      | `DATABASE_URL=mongodb://...`                | `pnpm add mongodb`        | Production, Atlas Vector Search       |
+| `Neo4jMemoryAdapter`      | `NEO4J_URL=bolt://...`                      | `pnpm add neo4j-driver`   | Graph-enriched semantic search        |
+| `RedisControlBus`         | `REDIS_URL=redis://...`                     | `pnpm add ioredis`        | Multi-instance control bus            |
+| `BullMQEventAdapter`      | manual / `pnpm add bullmq`                  | `pnpm add bullmq ioredis` | Durable queue, cron, retries          |
+| `WhatsAppDeliveryAdapter` | `WHATSAPP_GATEWAY_URL=...`                  | none                      | WhatsApp delivery via HTTP gateway    |
+| `createNemoAdapter`       | `import ... from "msm-agent/adapters/nemo"` | `pnpm add nemo-ai`        | Fast intent pre-classifier (optional) |
 
 Neo4j wraps any primary adapter as a graph enrichment layer. Failed BullMQ jobs retry 3× with exponential back-off.
 
@@ -655,7 +657,109 @@ The evolving layer requires a memory adapter that implements `search()` and `sto
 
 ---
 
-## 12. Arabic-Native Routing
+## 12. Nemo — Fast Pre-Classifier (optional)
+
+[nemo-ai](https://github.com/msm-core/nemo) is a zero-dependency semantic memory engine that classifies user intent in **under 1 ms** using Holographic Distributed Cognition (MAP-HDC) algebra — no LLM call, no network, no GPU.
+
+When wired into msm-agent it forms a tiered intent layer that sits in front of the brain:
+
+```
+User message
+  ↓
+[Nemo]  <1ms, zero cost
+  ├─ confidence ≥ 0.55 → skip_llm  — agent can short-circuit via preHook
+  ├─ confidence ≥ 0.35 → llm_assist — field hint injected into brain context
+  └─ confidence < 0.35 → full_llm  — brain takes full responsibility
+  ↓
+[Brain loop]  (only reached when nemo is uncertain)
+  ↓
+[teach()]  brain's confirmed classification fed back → nemo learns over time
+```
+
+Nemo supports **English and Arabic** natively. Its 42 semantic fields cover the most common commercial domains (booking, orders, support, healthcare, food, etc.).
+
+### Install
+
+```bash
+npm install nemo-ai
+```
+
+### Wire it into your agent
+
+```typescript
+import { NemoSession } from "nemo-ai";
+import { createNemoAdapter } from "msm-agent/adapters/nemo";
+import { createAgent } from "msm-agent";
+
+// Load a persisted model (or start fresh — nemo learns from traffic)
+const session = await NemoSession.load("./.nemo.json");
+
+const agent = createAgent({
+  brain,
+  nemo: createNemoAdapter(session), // ← omit to disable (default: off)
+  ...adapters,
+});
+```
+
+That is all the wiring required. The adapter handles the three lifecycle phases automatically:
+
+| Phase              | When                    | What happens                                                  |
+| ------------------ | ----------------------- | ------------------------------------------------------------- |
+| **run()**          | Before brain loop       | Classifies text → field + confidence + gate                   |
+| **hint injection** | Before brain call       | field+confidence prepended to evolving hints in brain context |
+| **teach()**        | After terminal response | Confirmed field reinforced into nemo's semantic memory        |
+
+### `createNemoAdapter` options
+
+```typescript
+createNemoAdapter(session, {
+  minConfidence: 0.25, // skip hint injection below this (default 0.25)
+});
+```
+
+### Pairing with `preHook` for full short-circuit
+
+For the highest-confidence intents you can skip the brain entirely:
+
+```typescript
+const agent = createAgent({
+  brain,
+  nemo: createNemoAdapter(session),
+  preHook: async (event) => {
+    if (event.type !== "user_message") return null;
+    const r = session.run(event.text);
+    if (r.gate === "skip_llm" && r.field === "greeting") {
+      return {
+        type: "response",
+        text: "Hello! How can I help you?",
+        language: "en",
+        payload: {} as BrainPayload,
+      };
+    }
+    return null; // proceed normally
+  },
+  ...adapters,
+});
+```
+
+### Learning behaviour
+
+Nemo uses an **observe → calibrate → classify → teach** cycle. It starts with zero domain knowledge and builds semantic memory from confirmed outcomes. The more traffic it sees, the higher its `skip_llm` rate climbs — reducing brain calls for high-frequency intents without any manual annotation or retraining.
+
+Persist the trained model between restarts:
+
+```typescript
+import { NemoSession } from "nemo-ai";
+const session = await NemoSession.load("./.nemo.json"); // loads if exists, creates otherwise
+// ... run agent ...
+// NemoSession auto-saves after teach() calls when a path is provided
+```
+
+→ [nemo-ai on GitHub](https://github.com/msm-core/nemo) — [npm install nemo-ai](https://www.npmjs.com/package/nemo-ai)
+
+---
+
+## 13. Arabic-Native Routing
 
 When `language: arabic` (or `ar`) is declared in the `## Brain` section of the agent definition, the runtime automatically routes Arabic user input through an Arabic-capable model. No code changes required.
 

@@ -1,6 +1,6 @@
 {
   "name": "msm-agent",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "description": "Portable agent framework — brain-agnostic execution core for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -25,6 +25,10 @@
     "./prompt": {
       "types": "./dist/prompt/index.d.ts",
       "default": "./dist/prompt/index.js"
+    },
+    "./adapters/nemo": {
+      "types": "./dist/adapters/nemo.d.ts",
+      "default": "./dist/adapters/nemo.js"
     }
   },
   "files": [
@@ -72,6 +76,7 @@
     "ioredis": "^5.4.0",
     "mongodb": "^6.14.0",
     "neo4j-driver": "^5.28.0",
+    "nemo-ai": "^1.6.0",
     "postgres": "^3.4.0"
   },
   "peerDependenciesMeta": {
@@ -91,6 +96,9 @@
       "optional": true
     },
     "@modelcontextprotocol/sdk": {
+      "optional": true
+    },
+    "nemo-ai": {
       "optional": true
     }
   }
