@@ -19,15 +19,30 @@
  *   llm_assist (confidence ≥ 0.35) — partial signal, field hint injected into prompt
  *   full_llm   (confidence < 0.35) — nemo unsure, brain takes full responsibility
  *
- * Usage:
+ * Usage (zero-config — session manages saves automatically):
  *
  *   import { NemoSession } from "nemo-ai";
  *   import { createNemoAdapter } from "msm-agent/adapters/nemo";
  *
- *   const session = await NemoSession.load("./.nemo.json");
+ *   // loadOrCreate: starts fresh on first run, restores memory on restart
+ *   const session = NemoSession.loadOrCreate("./.nemo.json");
  *   const agent = createAgent({
  *     brain,
- *     nemo: createNemoAdapter(session),   // ← optional; omit to disable
+ *     nemo: createNemoAdapter(session),   // ← session auto-saves every 100 teach() calls + SIGTERM
+ *     ...adapters,
+ *   });
+ *
+ * Usage (adapter controls save lifecycle — for custom intervals or shutdown hooks):
+ *
+ *   const session = NemoSession.loadOrCreate("./.nemo.json", {
+ *     autoSaveEvery: 0,    // disable session's own auto-save
+ *     shutdownHook: false, // disable session's own shutdown hook
+ *   });
+ *   const agent = createAgent({
+ *     brain,
+ *     nemo: createNemoAdapter(session, {
+ *       save: { every: 50, onShutdown: true },
+ *     }),
  *     ...adapters,
  *   });
  *
@@ -48,22 +63,70 @@ interface NemoSessionLike {
     confirmedField: string,
     meta?: Record<string, unknown>,
   ): void;
+  /** Optional — if present, the adapter can trigger saves on its own schedule. */
+  save?(): void;
 }
+
+/**
+ * Controls whether / how the adapter triggers session saves, on top of the
+ * session's own built-in auto-save. Useful when you want the agent config to
+ * be the single source of truth for persistence behaviour.
+ *
+ * Pass `false` to disable adapter-managed saving entirely (session manages itself).
+ * Omit entirely to also leave saving to the session (same as false for this field).
+ */
+export type SaveOptions =
+  | {
+      /**
+       * Save every N teach() calls (adapter-side counter).
+       * Independent of the session's own autoSaveEvery.
+       */
+      every?: number;
+      /**
+       * Register SIGTERM / SIGINT handlers to flush state on process exit.
+       * Node.js only. Use when session was created with shutdownHook: false.
+       */
+      onShutdown?: boolean;
+    }
+  | false;
 
 /**
  * Wrap a NemoSession as a NemoLike adapter for createAgent({ nemo }).
  *
- * @param session  A loaded NemoSession instance (from `NemoSession.load(path)`).
+ * @param session  A NemoSession instance (from `NemoSession.loadOrCreate(path)`).
  * @param options  Optional tuning.
  * @param options.minConfidence  Skip injecting hints below this threshold (default 0.25).
- *                               Avoids polluting brain context with very-low-confidence
- *                               guesses. Set to 0 to always inject.
+ * @param options.save           Adapter-level save strategy (default: session manages itself).
  */
 export function createNemoAdapter(
   session: NemoSessionLike,
-  options: { minConfidence?: number } = {},
+  options: { minConfidence?: number; save?: SaveOptions } = {},
 ): NemoLike {
   const minConfidence = options.minConfidence ?? 0.25;
+  const saveOpts = options.save;
+
+  // Adapter-level teach counter (only used when save.every is set)
+  let teachCount = 0;
+  const saveEvery =
+    saveOpts !== false && saveOpts?.every !== undefined ? saveOpts.every : 0;
+
+  // Adapter-level shutdown hook (only when explicitly opted in)
+  if (
+    saveOpts !== false &&
+    saveOpts?.onShutdown === true &&
+    typeof process !== "undefined" &&
+    typeof (process as NodeJS.Process).once === "function"
+  ) {
+    const onExit = () => {
+      try {
+        session.save?.();
+      } catch {
+        /* best effort */
+      }
+    };
+    process.once("SIGTERM", onExit);
+    process.once("SIGINT", onExit);
+  }
 
   return {
     run(text: string) {
@@ -88,6 +151,17 @@ export function createNemoAdapter(
     teach(text: string, field: string, meta?: Record<string, unknown>) {
       try {
         session.teach(text, field, meta);
+        // Adapter-level interval save (only when save.every is configured)
+        if (saveEvery > 0 && session.save) {
+          teachCount++;
+          if (teachCount % saveEvery === 0) {
+            try {
+              session.save();
+            } catch {
+              /* best effort */
+            }
+          }
+        }
       } catch {
         // Fail silently — teach() is best-effort, never critical
       }
