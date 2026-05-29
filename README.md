@@ -108,7 +108,46 @@ connectors:
 
 The runtime compiles this into your agent. Every section is optional. You can start with just a name, a persona, and a brain — and add capabilities incrementally.
 
-If you prefer a more structured, machine-queryable format, the same definition works as an IntentText `.it` file. The runtime auto-detects the format.
+### IntentText `.it` format
+
+The same definition works as an IntentText `.it` file — a structured, machine-queryable alternative to Markdown. The runtime auto-detects the format by file extension.
+
+```
+title: Support Agent
+summary: E-commerce customer support
+
+section: Persona
+prompt: Nour | style: warm, direct, solution-focused | language: Arabic, English
+
+section: Capabilities
+tool: answer product questions
+tool: check order status
+tool: create support tickets
+tool: escalate billing disputes | to: human
+
+section: Brain
+model: gpt-4o-mini | provider: openai
+
+section: Limits
+info: max iterations | max: 6
+info: confidence threshold | confidence: 0.7
+info: cost cap | cost: 0.05
+
+section: Hours
+hours: Asia/Qatar | Mon-Fri: 09:00-18:00 | Sat: 10:00-14:00
+text: We are currently closed. We'll respond first thing in the morning.
+
+section: Skills
+skill: booking
+skill: payments
+
+section: Equipment
+connector: shopify | operations: orders.list,customers.get | access: read | endpoint: ${SHOPIFY_ENDPOINT} | key: ${SHOPIFY_API_KEY}
+```
+
+Both formats produce an identical `AgentDefinition` object. Choose `.md` for readability, `.it` for structured tooling and machine queries. The `.it` format is especially useful when agent definitions are generated or queried programmatically.
+
+> **Requires `@intenttext/core` v3.5.0+.** Earlier versions coerced unknown keywords (e.g. `hours:`, `skill:`, `connector:`) to `type: "text"`, losing the keyword. v3.5.0 preserves them as `type: "custom"` blocks with `properties.keyword` intact.
 
 ---
 
@@ -1204,7 +1243,7 @@ Hard guards abort execution (iteration budget, cost cap, timeout, confidence gat
 pnpm test
 ```
 
-**337 tests.** All tests use the included dummy adapters — no external services required. The test suite covers:
+**383 tests.** All tests use the included dummy adapters — no external services required. The test suite covers:
 
 - Core loop, session mutex, plan tracking, tool dedup, flush gate
 - All 5 guard types

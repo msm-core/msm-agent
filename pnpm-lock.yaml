@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@intenttext/core':
-        specifier: file:../../IntentText/packages/core
-        version: file:../../IntentText/packages/core
+        specifier: ^3.5.0
+        version: 3.5.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@3.25.76)
@@ -195,8 +195,8 @@ packages:
     peerDependencies:
       hono: ^4
 
-  '@intenttext/core@file:../../IntentText/packages/core':
-    resolution: {directory: ../../IntentText/packages/core, type: directory}
+  '@intenttext/core@3.5.0':
+    resolution: {integrity: sha512-fpCQsZCPjrRNdRsD6MmN2WqQM2Ji+o6z/yeQ6gZieOESkUJ9zrLIeM/Gs0kjLaHEFv3DLQlavrsxIDKt46asqQ==}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -1091,7 +1091,7 @@ snapshots:
     dependencies:
       hono: 4.12.23
 
-  '@intenttext/core@file:../../IntentText/packages/core':
+  '@intenttext/core@3.5.0':
     dependencies:
       node-html-parser: 7.1.0
 
