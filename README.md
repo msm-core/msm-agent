@@ -691,8 +691,9 @@ import { NemoSession } from "nemo-ai";
 import { createNemoAdapter } from "msm-agent/adapters/nemo";
 import { createAgent } from "msm-agent";
 
-// Load a persisted model (or start fresh — nemo learns from traffic)
-const session = await NemoSession.load("./.nemo.json");
+// loadOrCreate: restores trained memory if the file exists, starts fresh if not.
+// Auto-saves every 100 teach() calls and flushes on SIGTERM — zero config needed.
+const session = NemoSession.loadOrCreate("./.nemo.json");
 
 const agent = createAgent({
   brain,
@@ -714,8 +715,18 @@ That is all the wiring required. The adapter handles the three lifecycle phases 
 ```typescript
 createNemoAdapter(session, {
   minConfidence: 0.25, // skip hint injection below this (default 0.25)
+  save: { every: 50, onShutdown: true }, // adapter-level save (optional)
 });
 ```
+
+| Option            | Default | Description                                                                                                                               |
+| ----------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `minConfidence`   | `0.25`  | Suppress hint injection below this confidence. Avoids polluting brain context with very-low-confidence guesses. Set `0` to always inject. |
+| `save.every`      | —       | Adapter-side teach() counter — saves every N calls, independent of the session's own `autoSaveEvery`.                                     |
+| `save.onShutdown` | —       | Register `SIGTERM`/`SIGINT` on the adapter side. Use when session was created with `shutdownHook: false`.                                 |
+| `save: false`     | —       | Disable all adapter-managed saving — session handles itself.                                                                              |
+
+> **Default behaviour (no `save` option):** The session's own auto-save runs (`autoSaveEvery: 100`, `shutdownHook: true` when a `filePath` is given). For most deployments, passing `save` is unnecessary.
 
 ### Pairing with `preHook` for full short-circuit
 
@@ -742,18 +753,33 @@ const agent = createAgent({
 });
 ```
 
-### Learning behaviour
+### Persistence and restore
 
-Nemo uses an **observe → calibrate → classify → teach** cycle. It starts with zero domain knowledge and builds semantic memory from confirmed outcomes. The more traffic it sees, the higher its `skip_llm` rate climbs — reducing brain calls for high-frequency intents without any manual annotation or retraining.
-
-Persist the trained model between restarts:
+nemo's HDC model is a plain JSON file (`.nemo.json`). The session manages its own lifecycle:
 
 ```typescript
-import { NemoSession } from "nemo-ai";
-const session = await NemoSession.load("./.nemo.json"); // loads if exists, creates otherwise
-// ... run agent ...
-// NemoSession auto-saves after teach() calls when a path is provided
+// Zero-config (recommended): restore on restart, auto-save every 100 teach() calls,
+// flush on SIGTERM — nothing else needed.
+const session = NemoSession.loadOrCreate("./.nemo.json");
+
+// Explicit restore only (e.g. file is managed externally or comes from a DB):
+const session = NemoSession.load("./.nemo.json"); // throws if file missing
+
+// Tune or disable built-in auto-save, delegate control to the adapter instead:
+const session = NemoSession.loadOrCreate("./.nemo.json", {
+  autoSaveEvery: 0, // disable session-side auto-save
+  shutdownHook: false, // disable session-side SIGTERM handler
+});
+const nemo = createNemoAdapter(session, {
+  save: { every: 50, onShutdown: true }, // adapter takes over
+});
+
+// Manual flush at any time (e.g. before a planned restart or snapshot):
+session.save();
+session.save("./memory.nemo.backup.json"); // snapshot to a different path
 ```
+
+**What to back up:** the `.nemo.json` file. It contains the learned prototype hypervectors from all `teach()` calls. Losing it means nemo starts fresh from the built-in vocabulary — still fully functional, but you lose the reinforced learning from past traffic.
 
 → [nemo-ai on GitHub](https://github.com/msm-core/nemo) — [npm install nemo-ai](https://www.npmjs.com/package/nemo-ai)
 
