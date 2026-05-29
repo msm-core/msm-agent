@@ -236,7 +236,12 @@ export function createAgent(options: CreateAgentOptions): AgentHandle {
       const outcome = await executeEvent(event, loopDeps, sessionId);
 
       // Nemo teach: reinforce field on successful terminal responses
-      if (options.nemo && nemoResult && outcome.type === "response") {
+      if (
+        options.nemo &&
+        nemoResult &&
+        outcome.type === "response" &&
+        event.type === "user_message"
+      ) {
         options.nemo.teach(event.text, nemoResult.field);
       }
 
