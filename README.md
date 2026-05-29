@@ -108,47 +108,6 @@ connectors:
 
 The runtime compiles this into your agent. Every section is optional. You can start with just a name, a persona, and a brain — and add capabilities incrementally.
 
-### IntentText `.it` format
-
-The same definition works as an IntentText `.it` file — a structured, machine-queryable alternative to Markdown. The runtime auto-detects the format by file extension.
-
-```
-title: Support Agent
-summary: E-commerce customer support
-
-section: Persona
-prompt: Nour | style: warm, direct, solution-focused | language: Arabic, English
-
-section: Capabilities
-tool: answer product questions
-tool: check order status
-tool: create support tickets
-tool: escalate billing disputes | to: human
-
-section: Brain
-model: gpt-4o-mini | provider: openai
-
-section: Limits
-info: max iterations | max: 6
-info: confidence threshold | confidence: 0.7
-info: cost cap | cost: 0.05
-
-section: Hours
-hours: Asia/Qatar | Mon-Fri: 09:00-18:00 | Sat: 10:00-14:00
-text: We are currently closed. We'll respond first thing in the morning.
-
-section: Skills
-skill: booking
-skill: payments
-
-section: Equipment
-connector: shopify | operations: orders.list,customers.get | access: read | endpoint: ${SHOPIFY_ENDPOINT} | key: ${SHOPIFY_API_KEY}
-```
-
-Both formats produce an identical `AgentDefinition` object. Choose `.md` for readability, `.it` for structured tooling and machine queries. The `.it` format is especially useful when agent definitions are generated or queried programmatically.
-
-> **Requires `@intenttext/core` v3.5.0+.** Earlier versions coerced unknown keywords (e.g. `hours:`, `skill:`, `connector:`) to `type: "text"`, losing the keyword. v3.5.0 preserves them as `type: "custom"` blocks with `properties.keyword` intact.
-
 ---
 
 ## 2. Quick Start
@@ -241,7 +200,7 @@ const agent = createAgent({ brain, ...adapters });
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│  AGENT DEFINITION FILE  (support-agent.md or support-agent.it)    │
+│  AGENT DEFINITION FILE  (support-agent.md)                        │
 │                                                                   │
 │  Persona · Capabilities · Brain · Limits · Hours ·                │
 │  Skills · Equipment · Memory rules                                │
@@ -1057,7 +1016,7 @@ await mcp.stop();
 
 ## 18. Running as a Microservice
 
-The CLI boots an HTTP server from any `.md` or `.it` definition file. Adapters wire automatically from environment variables — no code changes needed.
+The CLI boots an HTTP server from any `.md` definition file. Adapters wire automatically from environment variables — no code changes needed.
 
 ```bash
 # Single agent (in-memory, local dev)
@@ -1249,7 +1208,7 @@ pnpm test
 - All 5 guard types
 - Memory adapters (in-memory)
 - Control bus commands
-- Definition file parsing (`.md` and `.it`)
+- Definition file parsing (`.md`)
 - Brain system prompt generation
 - WhatsApp event + delivery adapters
 - Equipment connector registry and tool adapter
